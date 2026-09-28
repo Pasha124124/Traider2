@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f7f4">
+  <title>AU Desk — торговля золотом · Т-Инвестиции</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#overview" aria-label="AU Desk">
+        <span class="brand-mark">Au</span>
+        <span class="brand-copy"><strong>AU DESK</strong><small>золото · Т-Инвестиции</small></span>
+      </a>
+      <nav class="main-nav" aria-label="Навигация">
+        <button class="nav-item active" data-view="overview"><span class="nav-icon">◈</span>Дашборд</button>
+        <button class="nav-item" data-view="trading"><span class="nav-icon">₽</span>Торговля<span class="nav-count" id="trading-nav-note">демо</span></button>
+        <button class="nav-item" data-view="history"><span class="nav-icon">◷</span>История<span id="history-count" class="nav-count">—</span></button>
+      </nav>
+      <div class="sidebar-section-label">ДАННЫЕ</div>
+      <nav class="main-nav">
+        <button class="nav-item" data-view="news"><span class="nav-icon">▤</span>Новости<span id="news-dot" class="nav-status"></span></button>
+        <button class="nav-item" data-view="connections"><span class="nav-icon">⌘</span>Подключения<span class="nav-status" id="connection-dot"></span></button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <div class="risk-card">
+        <div class="risk-card-head"><span class="risk-icon">!</span><span>ВАЖНО</span></div>
+        <p>Сценарии — не гарантия доходности и не ИИР. Торговля ведётся на демо-счёте.</p>
+      </div>
+      <div class="sidebar-user"><div class="avatar">А</div><div><strong>Локальная сессия</strong><small>данные на этом ПК</small></div></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="breadcrumb"><strong id="breadcrumb-current">ДАШБОРД</strong></div>
+        <div class="topbar-actions">
+          <div class="market-status"><span class="status-dot" id="market-dot"></span><span id="market-status-text">ПОДКЛЮЧЕНИЕ</span></div>
+          <span class="vertical-rule"></span>
+          <span class="clock" id="clock">--:--:-- MSK</span>
+          <button class="button button-primary small" id="refresh-button"><span class="refresh-glyph">↻</span>Обновить</button>
+        </div>
+      </header>
+
+      <div id="global-alert" class="global-alert hidden"></div>
+
+      <!-- ============ ДАШБОРД ============ -->
+      <section class="view active" id="view-overview">
+        <!-- Главная строка: цена + что делать -->
+        <div class="hero-grid">
+          <article class="card price-card">
+            <div class="card-head">
+              <div>
+                <div class="card-label">ЗОЛОТО GLDRUB_TOM · ₽/ГРАММ</div>
+                <div class="price-line"><span id="current-price" class="big-price">—</span><span id="daily-change" class="change-chip neutral">—</span></div>
+                <div class="price-meta"><span id="quote-updated">—</span> · источник <b id="quote-source">—</b></div>
+              </div>
+            </div>
+            <div class="chart-toolbar">
+              <div class="chart-ranges">
+                <button class="range-button active" data-range="1H">1Ч</button>
+                <button class="range-button" data-range="4H">4Ч</button>
+                <button class="range-button" data-range="1D">1Д</button>
+                <button class="range-button" data-range="1W">1Н</button>
+              </div>
+              <span class="chart-hint">наведите на график — покажет цену и время</span>
+            </div>
+            <div class="chart-wrap">
+              <svg id="price-chart" viewBox="0 0 900 340" preserveAspectRatio="none" role="img" aria-label="График цены золота"></svg>
+              <div class="chart-tooltip hidden" id="chart-tooltip"></div>
+            </div>
+          </article>
+
+          <article class="card action-card" id="action-card">
+            <div class="card-label">ЧТО ДЕЛАТЬ СЕЙЧАС</div>
+            <div class="action-main">
+              <span class="action-icon" id="action-icon">…</span>
+              <div class="action-text">
+                <div class="action-title" id="action-title">Загружаем данные</div>
+                <div class="action-sub" id="action-sub">считаем сценарии</div>
+              </div>
+            </div>
+            <div class="action-levels" id="action-levels">
+              <div class="level"><span>Вход</span><b id="lv-entry">—</b></div>
+              <div class="level stop"><span>Стоп</span><b id="lv-stop">—</b></div>
+              <div class="level target"><span>Цель</span><b id="lv-target">—</b></div>
+              <div class="level"><span>Действует до</span><b id="lv-until">—</b></div>
+              <div class="level target"><span>Цель 2</span><b id="lv-target2">—</b></div>
+              <div class="level"><span>Уверенность</span><b id="lv-conf">—</b></div>
+            </div>
+            <div class="action-why" id="action-why"></div>
+            <div class="action-plan" id="action-plan"></div>
+          </article>
+        </div>
+
+        <!-- Сценарии по горизонтам -->
+        <div class="section-title">Сценарии по горизонтам <span class="hint">— кликните, чтобы показать уровни на графике</span></div>
+        <div class="horizon-grid" id="horizon-grid"><div class="empty-state compact">Рассчитываем сценарии…</div></div>
+
+        <!-- Факторы + новости -->
+        <div class="bottom-grid">
+          <article class="card factors-card">
+            <div class="card-head-row"><div class="card-label">ЧТО ВЛИЯЕТ НА СЦЕНАРИЙ</div></div>
+            <div id="factor-list" class="factor-list"><div class="empty-state compact">Ожидание котировок</div></div>
+          </article>
+          <article class="card news-card">
+            <div class="card-head-row"><div class="card-label">НОВОСТНОЙ ФОН · GDELT</div><button class="text-button" data-view-link="news">вся лента →</button></div>
+            <div id="news-preview" class="news-preview"><div class="empty-state compact">Загрузите ленту на вкладке «Новости»</div></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ============ ТОРГОВЛЯ ============ -->
+      <section class="view" id="view-trading">
+        <div class="page-head">
+          <div><h1>Торговля <span class="muted-note">· демо-счёт</span></h1><p class="sub">Рыночные и лимитные заявки · комиссия 0,05% · на биржу не выводится</p></div>
+          <button class="button button-ghost danger" id="trading-reset">Сбросить счёт</button>
+        </div>
+        <div class="trading-grid">
+          <article class="card account-card">
+            <div class="card-label">ПОРТФЕЛЬ</div>
+            <div class="price-line"><span id="trading-equity" class="big-price">—</span><span id="trading-pnl-chip" class="change-chip neutral">—</span></div>
+            <div class="account-rows">
+              <div class="account-row"><span>Свободные средства</span><b id="trading-cash">—</b></div>
+              <div class="account-row"><span>Позиция</span><b id="trading-position">—</b></div>
+              <div class="account-row"><span>Средняя цена</span><b id="trading-avg">—</b></div>
+              <div class="account-row"><span>Реализованный P&L</span><b id="trading-pnl">—</b></div>
+              <div class="account-row"><span>Комиссии уплачено</span><b id="trading-fees">—</b></div>
+            </div>
+            <div id="equity-spark" style="margin-top:12px"></div>
+          </article>
+          <article class="card order-card">
+            <div class="card-label">НОВАЯ ЗАЯВКА</div>
+            <div class="trade-types">
+              <button class="trade-type buy active" data-side="buy">Купить</button>
+              <button class="trade-type sell" data-side="sell">Продать</button>
+              <button class="trade-type limit" data-kind="limit">Лимитная</button>
+            </div>
+            <div class="form-row-trade">
+              <label>Объём, г<input id="trade-grams" type="number" min="1" step="0.01" value="10"></label>
+              <label class="limit-only hidden">Цена, ₽/г<input id="trade-limit" type="number" min="1" step="0.01"></label>
+            </div>
+            <button class="button button-buy" id="trade-submit">Купить по рынку</button>
+            <div class="trade-note" id="trade-levels">Уровни из сценариев: —</div>
+          </article>
+          <article class="card auto-card">
+            <div class="card-head-row"><div class="card-label">АВТОТОРГОВЛЯ</div><span class="live-badge" id="auto-state-badge"><i id="auto-dot"></i><span id="auto-state">выключена</span></span></div>
+            <p class="auto-desc">Агент читает сценарии и сам открывает/закрывает позицию: вход в зоне, стоп −0,4%, тейк +0,8%.</p>
+            <div class="form-row-trade">
+              <label>Интервал, мин<input id="auto-interval" type="number" min="5" max="60" value="10"></label>
+              <label>Макс. сумма, ₽<input id="auto-budget" type="number" min="1000" max="100000" step="1000" value="20000"></label>
+            </div>
+            <button class="button button-secondary" id="auto-toggle">Запустить</button>
+            <div class="trade-note" id="auto-log">Журнал появится после запуска.</div>
+          </article>
+        </div>
+        <div class="bottom-grid">
+          <article class="card"><div class="card-head-row"><div class="card-label">АКТИВНЫЕ ЗАЯВКИ</div></div><div id="orders-list" class="orders-list"><div class="empty-state compact">Нет активных заявок</div></div></article>
+          <article class="card"><div class="card-head-row"><div class="card-label">ЖУРНАЛ СДЕЛОК</div></div><div id="trades-list" class="trades-list"><div class="empty-state compact">Сделок пока нет</div></div></article>
+        </div>
+      </section>
+
+      <!-- ============ ИСТОРИЯ ============ -->
+      <section class="view" id="view-history">
+        <div class="page-head">
+          <div><h1>История прогнозов</h1><p class="sub">Снимки сценариев и сверка с фактом после истечения горизонта</p></div>
+          <button class="button button-ghost" id="export-history">Экспорт CSV</button>
+        </div>
+        <div class="scorecard-grid" id="scorecard-grid"></div>
+        <div class="history-tools">
+          <div class="filter-tabs">
+            <button class="filter-tab active" data-history-filter="all">Все</button>
+            <button class="filter-tab" data-history-filter="pending">Ожидают</button>
+            <button class="filter-tab" data-history-filter="evaluated">Сверены</button>
+          </div>
+        </div>
+        <div class="table-scroll"><table class="history-table"><thead><tr><th>ВРЕМЯ</th><th>ГОРИЗОНТ</th><th>СЦЕНАРИЙ</th><th>ВХОД / СТОП</th><th>ЦЕЛЬ 1 / 2</th><th>УВЕР.</th><th>СВЕРКА</th></tr></thead><tbody id="history-table-body"><tr><td colspan="7" class="table-placeholder">История пока пуста.</td></tr></tbody></table></div>
+      </section>
+
+      <!-- ============ НОВОСТИ ============ -->
+      <section class="view" id="view-news">
+        <div class="page-head">
+          <div><h1>Новости и фон</h1><p class="sub">GDELT · мировые публикации о золоте и рубле · обновление ~15 мин</p></div>
+          <button class="button button-primary" id="load-news-button">↻ Обновить ленту</button>
+        </div>
+        <div class="notice-bar"><span>ⓘ</span><span>Открытый агрегатор с задержкой; заголовки — не подтверждённые факты и не входят в числовую модель.</span></div>
+        <div class="card"><div id="news-list" class="news-list"><div class="empty-state">Загрузите ленту.</div></div></div>
+      </section>
+
+      <!-- ============ ПОДКЛЮЧЕНИЯ ============ -->
+      <section class="view" id="view-connections">
+        <div class="page-head">
+          <div><h1>Подключения</h1><p class="sub">Ключи хранятся локально в data/ и не покидают этот компьютер</p></div>
+          <span class="secure-pill">◈ LOCAL ONLY</span>
+        </div>
+        <div class="connection-layout">
+          <div class="connection-main">
+            <article class="card connection-card">
+              <div class="card-head-row"><h3>T‑Инвестиции API</h3><span id="t-status" class="pill">НЕ НАСТРОЕН</span></div>
+              <p class="muted-note">Котировки и свечи GLDRUB_TOM · токен только для чтения</p>
+              <label class="form-label">API-токен</label>
+              <div class="input-with-action"><input id="t-invest-token" class="text-input" type="password" placeholder="Вставьте токен" autocomplete="off" spellcheck="false"><button class="toggle-secret" data-target="t-invest-token">ПОКАЗАТЬ</button></div>
+              <div class="connection-actions"><button class="button button-secondary" id="test-t-invest">Проверить токен</button><button class="button button-primary" id="save-t-invest">Сохранить</button><span id="t-test-result" class="muted-note"></span></div>
+            </article>
+            <article class="card connection-card">
+              <div class="card-head-row"><h3>Yandex AI Studio</h3><span id="ai-status" class="pill">ОТКЛЮЧЁН</span></div>
+              <p class="muted-note">Необязательно: текстовое резюме картины рынка</p>
+              <div class="form-row-trade">
+                <label>API-ключ<input id="yandex-api-key" class="text-input" type="password" placeholder="Api-Key" autocomplete="off"></label>
+                <label>ID каталога<input id="yandex-folder-id" class="text-input" type="text" placeholder="b1g…"></label>
+              </div>
+              <div class="connection-actions"><button class="button button-secondary" id="test-yandex">Проверить</button><button class="button button-primary" id="save-yandex">Сохранить</button><button class="text-button danger" id="clear-yandex">Удалить</button></div>
+            </article>
+            <article class="card connection-card">
+              <div class="card-head-row"><h3>GDELT · новости</h3><span class="pill ok">ГОТОВО</span></div>
+              <p class="muted-note">Бесплатный мировой поиск заголовков о золоте и рубле</p>
+              <div class="connection-actions"><button class="button button-secondary" id="test-news">Загрузить заголовки</button></div>
+            </article>
+          </div>
+          <aside class="card readiness-card">
+            <div class="card-label">СТАТУС</div>
+            <div class="account-rows">
+              <div class="account-row"><span class="readiness-dot" id="ready-broker-dot"></span><span>Котировки T‑Invest</span><b id="ready-broker">ожидание</b></div>
+              <div class="account-row"><span class="readiness-dot pending"></span><span>Резерв MOEX ISS</span><b>автоматически</b></div>
+              <div class="account-row"><span class="readiness-dot pending"></span><span>Новости GDELT</span><b id="ready-news">ожидание</b></div>
+              <div class="account-row"><span class="readiness-dot" id="ready-ai-dot"></span><span>YandexGPT</span><b id="ready-ai">необязательный</b></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <footer class="app-footer"><span>AU DESK · локальный инструмент для торговли золотом в Т-Инвестициях</span><span id="footer-time">—</span></footer>
+    </main>
+  </div>
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

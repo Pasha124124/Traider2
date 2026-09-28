@@ -1,0 +1,13 @@
+{
+  "name": "gold-ruble-market-desk",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Локальная панель анализа биржевого золота GLDRUB_TOM",
+  "scripts": {
+    "start": "node --use-system-ca server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

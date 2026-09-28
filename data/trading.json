@@ -1,0 +1,220 @@
+{
+  "createdAt": "2026-09-28T05:40:07.673Z",
+  "cashRub": 119939.7,
+  "startCapitalRub": 100000,
+  "positionGrams": -1.77,
+  "avgPriceRubPerG": 11271,
+  "realizedPnlRub": -9.97,
+  "feesRub": 9.97,
+  "orders": [
+    {
+      "id": "ord_mul5201lhhln5",
+      "side": "sell",
+      "grams": 1.77,
+      "type": "market",
+      "limitPrice": null,
+      "status": "filled",
+      "createdAt": "2026-09-28T11:02:41.337Z",
+      "reason": "Шорт по сценарию 1нед: цена в зоне входа, уверенность 76%, цель 10316.95, стоп 11894.18. Импульс преимущественно нисходящий (оценка -79,77%), цена ниже MA20. Сценарий шорта теоретический — проверьте доступность займа и короткой позиции у брокера.",
+      "source": "auto",
+      "filledAt": "2026-09-28T11:02:41.337Z",
+      "fillPrice": 11271,
+      "feeRub": 9.97
+    }
+  ],
+  "trades": [
+    {
+      "id": "ord_mul5201lhhln5",
+      "time": "2026-09-28T11:02:41.337Z",
+      "side": "sell",
+      "grams": 1.77,
+      "priceRubPerG": 11271,
+      "feeRub": 9.97,
+      "reason": "Шорт по сценарию 1нед: цена в зоне входа, уверенность 76%, цель 10316.95, стоп 11894.18. Импульс преимущественно нисходящий (оценка -79,77%), цена ниже MA20. Сценарий шорта теоретический — проверьте доступность займа и короткой позиции у брокера.",
+      "source": "auto",
+      "realizedPnlRub": null,
+      "metaStop": null,
+      "metaTarget": null
+    }
+  ],
+  "equityCurve": [
+    {
+      "time": "2026-09-28T17:56:47.551Z",
+      "equityRub": 100051.1,
+      "priceRubPerG": 11236.5
+    },
+    {
+      "time": "2026-09-28T17:42:00.247Z",
+      "equityRub": 100051.1,
+      "priceRubPerG": 11236.5
+    },
+    {
+      "time": "2026-09-28T17:27:12.875Z",
+      "equityRub": 100051.1,
+      "priceRubPerG": 11236.5
+    },
+    {
+      "time": "2026-09-28T17:12:25.106Z",
+      "equityRub": 100051.1,
+      "priceRubPerG": 11236.5
+    },
+    {
+      "time": "2026-09-28T16:57:37.760Z",
+      "equityRub": 100051.1,
+      "priceRubPerG": 11236.5
+    },
+    {
+      "time": "2026-09-28T16:42:50.413Z",
+      "equityRub": 100051.1,
+      "priceRubPerG": 11236.5
+    },
+    {
+      "time": "2026-09-28T16:28:03.058Z",
+      "equityRub": 100051.1,
+      "priceRubPerG": 11236.5
+    },
+    {
+      "time": "2026-09-28T16:13:15.699Z",
+      "equityRub": 100051.1,
+      "priceRubPerG": 11236.5
+    },
+    {
+      "time": "2026-09-28T15:58:28.350Z",
+      "equityRub": 100051.98,
+      "priceRubPerG": 11236
+    },
+    {
+      "time": "2026-09-28T15:43:41.908Z",
+      "equityRub": 100074.11,
+      "priceRubPerG": 11223.5
+    },
+    {
+      "time": "2026-09-28T15:28:53.649Z",
+      "equityRub": 100062.6,
+      "priceRubPerG": 11230
+    },
+    {
+      "time": "2026-09-28T15:14:06.294Z",
+      "equityRub": 100067.03,
+      "priceRubPerG": 11227.5
+    },
+    {
+      "time": "2026-09-28T14:59:19.412Z",
+      "equityRub": 100087.38,
+      "priceRubPerG": 11216
+    },
+    {
+      "time": "2026-09-28T14:44:31.595Z",
+      "equityRub": 100080.3,
+      "priceRubPerG": 11220
+    },
+    {
+      "time": "2026-09-28T14:29:44.255Z",
+      "equityRub": 100013.04,
+      "priceRubPerG": 11258
+    },
+    {
+      "time": "2026-09-28T14:14:56.906Z",
+      "equityRub": 100007.73,
+      "priceRubPerG": 11261
+    },
+    {
+      "time": "2026-09-28T14:00:09.552Z",
+      "equityRub": 99940.47,
+      "priceRubPerG": 11299
+    },
+    {
+      "time": "2026-09-28T13:45:22.203Z",
+      "equityRub": 99983.83,
+      "priceRubPerG": 11274.5
+    },
+    {
+      "time": "2026-09-28T13:30:35.293Z",
+      "equityRub": 100012.15,
+      "priceRubPerG": 11258.5
+    },
+    {
+      "time": "2026-09-28T13:15:47.515Z",
+      "equityRub": 99982.95,
+      "priceRubPerG": 11275
+    },
+    {
+      "time": "2026-09-28T13:01:00.168Z",
+      "equityRub": 99979.41,
+      "priceRubPerG": 11277
+    },
+    {
+      "time": "2026-09-28T12:46:12.821Z",
+      "equityRub": 100016.58,
+      "priceRubPerG": 11256
+    },
+    {
+      "time": "2026-09-28T12:31:25.462Z",
+      "equityRub": 100003.31,
+      "priceRubPerG": 11263.5
+    },
+    {
+      "time": "2026-09-28T12:16:38.104Z",
+      "equityRub": 99948.44,
+      "priceRubPerG": 11294.5
+    },
+    {
+      "time": "2026-09-28T12:01:50.753Z",
+      "equityRub": 100005.08,
+      "priceRubPerG": 11262.5
+    },
+    {
+      "time": "2026-09-28T11:47:03.399Z",
+      "equityRub": 100002.42,
+      "priceRubPerG": 11264
+    },
+    {
+      "time": "2026-09-28T11:32:16.045Z",
+      "equityRub": 99994.46,
+      "priceRubPerG": 11268.5
+    },
+    {
+      "time": "2026-09-28T11:17:28.686Z",
+      "equityRub": 100015.7,
+      "priceRubPerG": 11256.5
+    },
+    {
+      "time": "2026-09-28T11:02:41.337Z",
+      "equityRub": 99990.03,
+      "priceRubPerG": 11271
+    },
+    {
+      "time": "2026-09-28T10:47:53.958Z",
+      "equityRub": 100000,
+      "priceRubPerG": 11296
+    },
+    {
+      "time": "2026-09-28T10:33:06.711Z",
+      "equityRub": 100000,
+      "priceRubPerG": 11305.5
+    },
+    {
+      "time": "2026-09-28T10:18:19.254Z",
+      "equityRub": 100000,
+      "priceRubPerG": 11285.5
+    },
+    {
+      "time": "2026-09-28T10:03:31.898Z",
+      "equityRub": 100000,
+      "priceRubPerG": 11281.5
+    }
+  ],
+  "autoTrading": {
+    "enabled": true,
+    "intervalMin": 10,
+    "maxOrderRub": 20000,
+    "riskNote": "Демо-режим: ордера исполняются по последней цене закрытия без реальной постановки на биржу."
+  },
+  "openPosition": {
+    "stop": 11894.18,
+    "target": 10316.95,
+    "horizon": "1нед",
+    "openedAt": "2026-09-28T11:02:41.336Z"
+  },
+  "shortCollateral": 19949.67
+}

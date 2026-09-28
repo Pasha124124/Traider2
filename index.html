@@ -64,10 +64,13 @@
                 <button class="range-button" data-range="1D">1Д</button>
                 <button class="range-button" data-range="1W">1Н</button>
               </div>
-              <span class="chart-hint">наведите на график — покажет цену и время</span>
+              <span class="chart-hint">выберите сценарий — уровни появятся на графике</span>
             </div>
+            <div class="chart-horizons" id="chart-horizons"></div>
+            <div class="chart-horizons" id="chart-horizons"></div>
             <div class="chart-wrap">
-              <svg id="price-chart" viewBox="0 0 900 340" preserveAspectRatio="none" role="img" aria-label="График цены золота"></svg>
+              <svg id="price-chart" viewBox="0 0 1000 460" preserveAspectRatio="none" role="img" aria-label="График цены золота"></svg>
+              <div class="chart-ticket hidden" id="chart-ticket"></div>
               <div class="chart-tooltip hidden" id="chart-tooltip"></div>
             </div>
           </article>
@@ -105,7 +108,8 @@
             <div id="factor-list" class="factor-list"><div class="empty-state compact">Ожидание котировок</div></div>
           </article>
           <article class="card news-card">
-            <div class="card-head-row"><div class="card-label">НОВОСТНОЙ ФОН · GDELT</div><button class="text-button" data-view-link="news">вся лента →</button></div>
+            <div class="card-head-row"><div class="card-label">НОВОСТНОЙ ФОН</div><button class="text-button" data-view-link="news">вся лента →</button></div>
+            <div class="news-impact empty" id="news-impact-badge">Новости: загружаем ленты РФ…</div>
             <div id="news-preview" class="news-preview"><div class="empty-state compact">Загрузите ленту на вкладке «Новости»</div></div>
           </article>
         </div>

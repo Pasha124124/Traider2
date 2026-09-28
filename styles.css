@@ -79,13 +79,68 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 'Segoe UI',Ar
 .range-button{font:600 11px var(--mono);background:#fff;border:1px solid var(--line);border-radius:6px;color:var(--muted);padding:4px 10px;cursor:pointer}
 .range-button.active{background:var(--text);border-color:var(--text);color:#fff}
 .chart-hint{font-size:10px;color:var(--subtle)}
-.chart-wrap{position:relative;height:320px}
+.chart-wrap{position:relative;height:420px}
 .chart-wrap svg{display:block;width:100%;height:100%;overflow:visible}
+.chart-wrap svg .level-hit{fill:transparent;cursor:pointer}
+.chart-wrap svg .level.focused .level-line{stroke-width:3;stroke-dasharray:none}
+.chart-wrap svg .level.focused .level-text{font-weight:700}
+
+/* Чипы выбора сценария прямо над графиком */
+.chart-horizons{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.chart-chip{
+  display:flex;align-items:baseline;gap:7px;padding:5px 10px;border-radius:6px;
+  border:1px solid var(--line);background:var(--surface);cursor:pointer;
+  transition:border-color .15s,background .15s;
+}
+.chart-chip:hover{border-color:var(--subtle)}
+.chart-chip-h{font:600 11px var(--mono);color:var(--text)}
+.chart-chip-a{font:9px var(--mono);letter-spacing:.06em;color:var(--subtle)}
+.chart-chip-c{font:10px var(--mono);color:var(--subtle)}
+.chart-chip.active{background:var(--text);border-color:var(--text)}
+.chart-chip.active .chart-chip-h,.chart-chip.active .chart-chip-a,.chart-chip.active .chart-chip-c{color:var(--bg)}
+.chart-chip.long .chart-chip-a{color:var(--up)}
+.chart-chip.short .chart-chip-a{color:var(--red)}
+.chart-chip.clear{border-style:dashed;color:var(--subtle)}
+
+/* Торговый билет поверх свечей */
+.chart-ticket{
+  position:absolute;top:10px;left:10px;z-index:4;width:236px;
+  padding:11px 12px;border-radius:9px;font-size:11.5px;
+  background:rgba(255,255,255,.94);backdrop-filter:blur(3px);
+  border:1px solid var(--line);box-shadow:0 6px 22px rgba(20,30,25,.14);
+  pointer-events:none;
+}
+.ticket-top{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.ticket-action{font:700 12px var(--mono);letter-spacing:.04em}
+.ticket-action.long{color:var(--up)}
+.ticket-action.short{color:var(--red)}
+.ticket-horizon{font:9px var(--mono);color:var(--subtle)}
+.ticket-row{display:flex;justify-content:space-between;gap:10px;padding:2.5px 0;color:#5c6a62}
+.ticket-row b{font:600 11.5px var(--mono);color:var(--text)}
+.ticket-row b.up{color:var(--up)}
+.ticket-row b.down{color:var(--red)}
+.ticket-sep{height:1px;background:var(--line);margin:7px 0}
+.ticket-news{margin-top:8px;padding:4px 7px;border-radius:5px;font:10px var(--mono);background:#eef2ec}
+.ticket-news.negative{background:rgba(214,120,110,.12)}
+.ticket-news.positive{background:rgba(72,160,120,.12)}
+.ticket-warn{margin-top:7px;font-size:9.5px;line-height:1.4;color:#8a9189}
+.cross-line{stroke:#9aa39b;stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
+.cross-price-bg{fill:var(--text)}
+.cross-price{font:600 10px var(--mono);fill:#fff}
+.time-scale{font:10px var(--mono);fill:var(--subtle)}
+.last-tag-line{stroke:var(--accent);stroke-width:1;stroke-dasharray:2 3;vector-effect:non-scaling-stroke}
+.last-tag-bg{fill:var(--text)}
+.last-tag-text{font:600 10px var(--mono);fill:#fff}
+.news-impact{margin:0 0 10px;padding:6px 9px;border-radius:6px;font:10px var(--mono);background:#eef2ec;color:#5c6a62}
+.news-impact b{color:var(--text)}
+.news-impact.positive{background:rgba(72,160,120,.12)}
+.news-impact.negative{background:rgba(214,120,110,.12)}
+.news-impact.weak{opacity:.72}
 .chart-tooltip{position:absolute;pointer-events:none;background:var(--text);color:#fff;border-radius:8px;padding:8px 11px;font:11px var(--mono);line-height:1.6;white-space:nowrap;z-index:5;box-shadow:0 4px 16px rgba(0,0,0,.18)}
 .chart-tooltip .tt-up{color:#7ee2a8}
 .chart-tooltip .tt-down{color:#ff9d92}
-.chart-grid-line{stroke:#eef0ec;stroke-width:1}
-.candle-wick{stroke:#8b948c;stroke-width:1;vector-effect:non-scaling-stroke}
+.chart-grid-line{stroke:#eef0ec;stroke-width:1;vector-effect:non-scaling-stroke}
+.candle-wick{stroke:#6f7a72;stroke-width:1.6;vector-effect:non-scaling-stroke}
 .candle-body.up{fill:var(--up)}
 .candle-body.down{fill:var(--down)}
 .volume-bar.up{fill:var(--up);opacity:.25}

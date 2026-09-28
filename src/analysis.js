@@ -197,7 +197,7 @@ function analyzeMarket(candles, context = {}) {
     return forecast;
   });
   const price = indicators.price;
-  return {
+  const analysis = {
     instrument: context.instrument || 'GLDRUB_TOM',
     provider: context.provider || 'unknown',
     generatedAt: context.timestamp || new Date().toISOString(),
@@ -221,8 +221,39 @@ function analyzeMarket(candles, context = {}) {
     forecasts,
     observations: safeCandles.length,
     dataQuality: safeCandles.length < 50 ? 'limited' : 'usable',
-    caveat: 'Модель оценивает сценарии только по доступным ценам/свечам. Она не «видит весь рынок»: стакан, новости, валютные факторы и комиссии учитываются отдельно лишь при наличии источников.',
+    caveat: 'Сценарии строятся по свечам; российский новостной фон учитывается лишь небольшой поправкой. Инструмент не «видит весь рынок»: стакан, XAU/USD, USD/RUB и комиссии брокера здесь не подключены.',
   };
+  return applyNewsImpact(analysis, context.news, indicators);
+}
+
+// Российский новостной фон. Заголовки могут лишь слегка сдвинуть сводный импульс
+// и снизить уверенность при конфликте с ценой — они никогда не создают сигнал сами.
+const NEWS_SCORE_CAP = 15; // максимум, на который новости могут сдвинуть импульс, баллов
+function applyNewsImpact(analysis, impact, metrics) {
+  const news = impact && impact.enabled ? impact : { enabled: false, bias: 0, impact: 0, headlines: 0, sources: [], sources_conflict: false, note: 'Российские новостные ленты недоступны или нерелевантны — сценарий построен только по цене.' };
+  const shift = news.impact ? news.bias * NEWS_SCORE_CAP * news.impact : 0;
+  const before = analysis.trendScore;
+  analysis.trendScore = roundTo(analysis.trendScore + shift, 1);
+  analysis.technicalTrendScore = before;
+
+  const technicalDirection = Math.sign(before) || 0;
+  const conflict = Boolean(technicalDirection && Math.sign(shift) && Math.sign(shift) !== technicalDirection && Math.abs(shift) >= 3);
+  if (conflict) {
+    analysis.confidence = Math.max(30, Math.round(analysis.confidence * 0.88));
+    analysis.trend = 'neutral';
+  }
+  if (news.impact && !conflict && Math.sign(shift) === technicalDirection && technicalDirection) {
+    analysis.trend = before > 0 ? 'bullish' : 'bearish';
+  }
+  analysis.commentary = `${analysis.commentary} ${news.note || ''}`;
+  analysis.factors = buildFactors(metrics, news);
+  analysis.news = {
+    ...news,
+    shift: roundTo(shift, 2),
+    conflict,
+    headlinesUsed: news.headlines || 0,
+  };
+  return analysis;
 }
 
 function buildCommentary(metrics) {
@@ -231,14 +262,17 @@ function buildCommentary(metrics) {
   return `Сводный импульс ${direction} (${formatPercent(metrics.score * 100)}). ${rsiText}. Цена ${metrics.price >= metrics.ma20 ? 'находится выше' : 'находится ниже'} 20-периодной средней. Уровень ${formatPrice(metrics.low)} — ближайшая наблюдаемая поддержка, ${formatPrice(metrics.high)} — сопротивление за доступный участок истории. Это не фундаментальный анализ: глобальное XAU/USD и USD/RUB здесь не подключены.`;
 }
 
-function buildFactors(metrics) {
+function buildFactors(metrics, news) {
+  const newsRow = news && news.enabled
+    ? { label: 'Российские новости', value: `${news.headlines} заголовков · ${news.sources?.length || 0} источников · перевес ${news.bias > 0.05 ? 'в пользу роста' : news.bias < -0.05 ? 'в пользу снижения' : 'нейтральный'}`, sentiment: news.conflict ? 'negative' : news.bias > 0.05 ? 'positive' : news.bias < -0.05 ? 'negative' : 'neutral' }
+    : { label: 'Российские новости', value: 'релевантных заголовков недостаточно', sentiment: 'missing' };
   return [
     { label: 'Тренд MA20/MA50', value: metrics.trendScore > 0.12 ? 'в пользу роста' : metrics.trendScore < -0.12 ? 'в пользу снижения' : 'без выраженного направления', sentiment: metrics.trendScore > 0.12 ? 'positive' : metrics.trendScore < -0.12 ? 'negative' : 'neutral' },
     { label: 'RSI(14)', value: `${Math.round(metrics.rsi)} · ${metrics.rsi > 70 ? 'перекупленность' : metrics.rsi < 30 ? 'перепроданность' : 'нейтральная зона'}`, sentiment: metrics.rsi > 70 ? 'negative' : metrics.rsi < 30 ? 'positive' : 'neutral' },
     { label: 'Импульс за 15 свечей', value: formatPercent(metrics.momentum15m * 100), sentiment: metrics.momentum15m > 0.001 ? 'positive' : metrics.momentum15m < -0.001 ? 'negative' : 'neutral' },
     { label: 'Объём', value: metrics.averageVolume > 0 ? `${metrics.volumeRatio.toFixed(2)}× средней активности` : 'нет данных об объёме', sentiment: 'neutral' },
     { label: 'Глобальное золото / USD/RUB', value: 'источник не подключён', sentiment: 'missing' },
-    { label: 'Новости / календарь', value: 'проверьте свежесть ленты; автоматический анализ не гарантирован', sentiment: 'missing' },
+    newsRow,
   ];
 }
 
@@ -292,4 +326,4 @@ function clamp(value, low, high) {
   return Math.max(low, Math.min(high, value));
 }
 
-module.exports = { DEFAULT_HORIZONS, computeIndicators, analyzeMarket, evaluateForecasts, mean, stddev, rsi };
+module.exports = { DEFAULT_HORIZONS, computeIndicators, analyzeMarket, applyNewsImpact, evaluateForecasts, mean, stddev, rsi };

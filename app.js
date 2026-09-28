@@ -11,7 +11,9 @@ const state = {
   refreshTimer: null,
   chartHorizon: null,
   trading: { side: 'buy', kind: 'market' },
-  chart: { data: [], min: 0, max: 1, width: 900, height: 340 },
+  tradingSnapshot: null,
+  newsImpact: null,
+  chart: { data: [], min: 0, max: 1, width: 1000, height: 460, plotW: 918, padTop: 14, priceHeight: 420 },
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -89,6 +91,7 @@ async function loadMarket({ quiet = false } = {}) {
     }));
     state.history = data.forecasts || [];
     state.news = data.news || [];
+    state.newsImpact = data.newsImpact || null;
     state.scorecard = data.scorecard;
     renderAll(data.settings);
   } catch (error) {
@@ -105,9 +108,26 @@ function renderAll(config) {
   renderForecasts(state.forecasts);
   renderHistory(state.history, state.scorecard);
   renderNewsPreview(state.news);
+  renderNewsImpactBadge();
   renderConfig(config);
   setMarketState(state.market?.provider, false, state.market?.dataStatus);
   $('#history-count').textContent = String(state.history.length);
+}
+
+// Новостной фон — теперь он влияет на сценарий, поэтому показываем его не только в ленте.
+function renderNewsImpactBadge() {
+  const news = state.newsImpact;
+  const badge = $('#news-impact-badge');
+  if (!badge) return;
+  if (!news || !news.enabled) {
+    badge.className = 'news-impact empty';
+    badge.textContent = news?.note ? 'Новости: фон не учтён' : 'Новости: ленты недоступны';
+    return;
+  }
+  const label = news.tone === 'positive' ? 'рост' : news.tone === 'negative' ? 'снижение' : 'нейтрально';
+  badge.className = `news-impact ${news.tone}${news.enough ? '' : ' weak'}`;
+  badge.innerHTML = `Новости РФ: <b>${label}</b> · ${news.headlines} заг. · ${news.scoredSources} источн. · сдвиг импульса ${news.shift != null ? news.shift : '—'}`;
+  badge.title = news.note || '';
 }
 
 // ============ ГЛАВНАЯ КАРТОЧКА «ЧТО ДЕЛАТЬ СЕЙЧАС» ============
@@ -178,19 +198,71 @@ function renderMarket(market) {
   drawChart(candles, state.range);
 }
 
+// Сценарии выбираются прямо над графиком: чипы горизонтов плюс сам сценарий
+// с уровнями, зоной входа и торговым билетом поверх свечей.
+function renderChartHorizons(forecasts) {
+  const host = $('#chart-horizons');
+  if (!host) return;
+  if (!forecasts?.length) { host.innerHTML = ''; return; }
+  host.innerHTML = forecasts.map((forecast) => `
+    <button type="button" class="chart-chip ${state.chartHorizon === forecast.horizon ? 'active' : ''} ${esc(forecast.action)}" data-horizon="${esc(forecast.horizon)}">
+      <span class="chart-chip-h">${esc(forecast.horizonLabel)}</span>
+      <span class="chart-chip-a">${actionName(forecast.action)}</span>
+      <span class="chart-chip-c">${forecast.confidence}%</span>
+    </button>`).join('')
+    + (state.chartHorizon ? '<button type="button" class="chart-chip clear" data-horizon="">Скрыть уровни</button>' : '');
+}
+
+function renderChartTicket(forecast) {
+  const host = $('#chart-ticket');
+  if (!host) return;
+  if (!forecast || forecast.action === 'wait') {
+    host.classList.add('hidden');
+    host.innerHTML = '';
+    return;
+  }
+  const isLong = forecast.action === 'long';
+  const entry = (Number(forecast.entryLow) + Number(forecast.entryHigh)) / 2;
+  const risk = Math.abs(entry - Number(forecast.stop));
+  const reward = Math.abs(Number(forecast.target1) - entry);
+  const rr = risk > 0 ? (reward / risk) : 0;
+  const cash = Number(state.tradingSnapshot?.cashRub || 0);
+  const budget = Math.min(cash || 20000, 20000);
+  const grams = entry > 0 ? Math.floor((budget / entry) * 100) / 100 : 0;
+  const riskRub = grams * risk;
+  const news = state.analysis?.news;
+  host.classList.remove('hidden');
+  host.innerHTML = `
+    <div class="ticket-top">
+      <b class="ticket-action ${esc(forecast.action)}">${actionTitle(forecast.action)}</b>
+      <span class="ticket-horizon">${esc(forecast.horizonLabel)} · уверенность ${forecast.confidence}%</span>
+    </div>
+    <div class="ticket-row"><span>1. Вход</span><b>${fmtPrice(forecast.entryLow)}–${fmtPrice(forecast.entryHigh)}</b></div>
+    <div class="ticket-row"><span>${isLong ? '2. Стоп (защита)' : '2. Стоп (закрытие)'}</span><b class="down">${fmtPrice(forecast.stop)}</b></div>
+    <div class="ticket-row"><span>3. Цель 1</span><b class="up">${fmtPrice(forecast.target1)}</b></div>
+    <div class="ticket-row"><span>4. Цель 2</span><b class="up">${fmtPrice(forecast.target2)}</b></div>
+    <div class="ticket-sep"></div>
+    <div class="ticket-row"><span>Объём</span><b>${grams > 0 ? fmtGrams(grams) : '—'}</b></div>
+    <div class="ticket-row"><span>Риск до стопа</span><b>${riskRub > 0 ? fmtRub(riskRub) : '—'}</b></div>
+    <div class="ticket-row"><span>Соотношение риск/прибыль</span><b>1 : ${rr.toFixed(2)}</b></div>
+    ${news && news.enabled ? `<div class="ticket-news ${esc(news.tone)}">Новости: ${news.bias > 0 ? 'рост' : news.bias < 0 ? 'снижение' : 'нейтрально'}${news.conflict ? ' · конфликт с ценой, вес снижен' : ''}</div>` : ''}
+    <div class="ticket-warn">Демо-расчёт. Комиссии, проскальзывание, лоты и доступность шорта здесь не учтены.</div>`;
+}
+
 function drawChart(candles, range = state.range) {
   const svg = $('#price-chart');
   if (!svg) return;
   const intervals = { '1H': 60, '4H': 240, '1D': 1440, '1W': 10_080 };
   const maxPoints = intervals[range] || 60;
   let data = candles.slice(-Math.min(maxPoints, candles.length));
-  if (data.length > 260) data = downsampleCandles(data, Math.ceil(data.length / 260));
+  if (data.length > 180) data = downsampleCandles(data, Math.ceil(data.length / 180));
+  const forecast = currentForecast();
+  renderChartHorizons(state.forecasts);
+  renderChartTicket(forecast);
   if (data.length < 2) {
-    svg.innerHTML = '<text x="450" y="170" fill="#98a099" text-anchor="middle" font-size="13">Недостаточно данных для графика</text>';
+    svg.innerHTML = '<text x="500" y="230" fill="#98a099" text-anchor="middle" font-size="14">Недостаточно данных для графика</text>';
     return;
   }
-  const forecast = currentForecast();
-  const closes = data.map((item) => Number(item.close));
   let low = Math.min(...data.map((item) => Number(item.low)));
   let high = Math.max(...data.map((item) => Number(item.high)));
   if (forecast && forecast.action !== 'wait') {
@@ -198,54 +270,72 @@ function drawChart(candles, range = state.range) {
     high = Math.max(high, Number(forecast.stop), Number(forecast.target1), Number(forecast.target2));
   }
   const spread = Math.max(high - low, high * 0.001, 1);
-  const min = low - spread * 0.1;
-  const max = high + spread * 0.1;
-  const width = 900;
-  const height = 340;
-  const padRight = 62;
+  const min = low - spread * 0.08;
+  const max = high + spread * 0.08;
+  const width = 1000;
+  const height = 460;
+  const padRight = 82;
+  const padTop = 14;
+  const padBottom = 26;
   const plotW = width - padRight;
-  const volumeHeight = 34;
-  const priceHeight = height - volumeHeight - 6;
-  const x = (index) => (index / (data.length - 1)) * plotW;
-  const y = (price) => priceHeight - ((price - min) / (max - min)) * priceHeight;
-  state.chart = { data, min, max, width, height, plotW, priceHeight, x, y };
+  const priceHeight = height - padTop - padBottom;
+  const slot = plotW / data.length;
+  const x = (index) => slot * (index + 0.5);
+  const y = (price) => padTop + priceHeight - ((price - min) / (max - min)) * priceHeight;
+  state.chart = { data, min, max, width, height, plotW, padTop, priceHeight, x, y };
 
-  const gridLines = 5;
+  const gridLines = 6;
   const grid = Array.from({ length: gridLines }, (_, i) => {
     const value = min + ((max - min) * i) / (gridLines - 1);
     const yy = y(value).toFixed(1);
-    return `<line class="chart-grid-line" x1="0" y1="${yy}" x2="${plotW}" y2="${yy}"/><text class="price-scale" x="${plotW + 6}" y="${Number(yy) + 3}">${fmtPrice(value)}</text>`;
+    return `<line class="chart-grid-line" x1="0" y1="${yy}" x2="${plotW}" y2="${yy}"/><text class="price-scale" x="${plotW + 9}" y="${(Number(yy) + 4).toFixed(1)}">${fmtPrice(value)}</text>`;
   }).join('');
 
-  const bodyWidth = Math.max(2, Math.min(10, (plotW * 0.7) / data.length));
+  // Тело свечи всегда читаемое: не тоньше 3.4px даже когда свечей много.
+  const bodyWidth = Math.max(3.4, Math.min(15, slot * 0.66));
   const candlesMarkup = data.map((item, index) => {
     const cx = x(index);
     const up = Number(item.close) >= Number(item.open);
     const cls = up ? 'up' : 'down';
     const bodyTop = y(Math.max(Number(item.open), Number(item.close)));
     const bodyBottom = y(Math.min(Number(item.open), Number(item.close)));
-    const bodyH = Math.max(1, bodyBottom - bodyTop);
-    return `<line class="candle-wick" x1="${cx.toFixed(1)}" y1="${y(Number(item.high)).toFixed(1)}" x2="${cx.toFixed(1)}" y2="${y(Number(item.low)).toFixed(1)}"/>`
-      + `<rect class="candle-body ${cls}" x="${(cx - bodyWidth / 2).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${bodyWidth.toFixed(1)}" height="${bodyH.toFixed(1)}"/>`;
+    const bodyH = Math.max(1.5, bodyBottom - bodyTop);
+    const hi = y(Number(item.high));
+    const lo = y(Number(item.low));
+    return `<g class="candle ${cls}">`
+      + `<line class="candle-wick" x1="${cx.toFixed(1)}" y1="${hi.toFixed(1)}" x2="${cx.toFixed(1)}" y2="${lo.toFixed(1)}"/>`
+      + `<rect class="candle-body ${cls}" x="${(cx - bodyWidth / 2).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${bodyWidth.toFixed(1)}" height="${bodyH.toFixed(1)}" rx="${Math.min(1.5, bodyWidth / 6).toFixed(1)}"/>`
+      + `</g>`;
   }).join('');
 
-  const volumes = data.map((item) => Number(item.volume || 0));
-  const maxVolume = Math.max(...volumes, 1);
-  const volumeBars = data.map((item, index) => {
-    const vh = (Number(item.volume || 0) / maxVolume) * volumeHeight;
-    if (vh <= 0.5) return '';
-    const up = Number(item.close) >= Number(item.open);
-    return `<rect class="volume-bar ${up ? 'up' : 'down'}" x="${(x(index) - bodyWidth / 2).toFixed(1)}" y="${(height - vh).toFixed(1)}" width="${bodyWidth.toFixed(1)}" height="${vh.toFixed(1)}"/>`;
-  }).join('');
+  // Ось времени: четыре равномерно разнесённые подписи.
+  const timeFormat = (date) => date ? date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+  const timeAxis = [0, Math.floor((data.length - 1) / 3), Math.floor(((data.length - 1) * 2) / 3), data.length - 1]
+    .map((index, position, all) => {
+      const item = data[index];
+      if (!item?.time) return '';
+      const anchor = position === 0 ? 'start' : position === all.length - 1 ? 'end' : 'middle';
+      return `<text class="time-scale" x="${x(index).toFixed(1)}" y="${height - 7}" text-anchor="${anchor}">${esc(timeFormat(new Date(item.time)))}</text>`;
+    }).join('');
 
   const levels = [];
   if (forecast && forecast.action !== 'wait') {
-    const levelLine = (value, cls, label) => `<line class="level-line ${cls}" x1="0" y1="${y(value).toFixed(1)}" x2="${plotW}" y2="${y(value).toFixed(1)}"/><text class="level-text ${cls}" x="${plotW + 4}" y="${(y(value) + 3).toFixed(1)}">${esc(label)}</text>`;
-    levels.push(`<rect class="level-entry-zone" x="0" y="${y(Number(forecast.entryHigh)).toFixed(1)}" width="${plotW}" height="${Math.max(2, y(Number(forecast.entryLow)) - y(Number(forecast.entryHigh))).toFixed(1)}"/>`);
-    levels.push(levelLine(forecast.stop, 'stop', fmtPrice(forecast.stop)));
-    levels.push(levelLine((Number(forecast.entryLow) + Number(forecast.entryHigh)) / 2, 'entry', fmtPrice((Number(forecast.entryLow) + Number(forecast.entryHigh)) / 2)));
-    levels.push(levelLine(forecast.target1, 'target', fmtPrice(forecast.target1)));
-    levels.push(levelLine(forecast.target2, 'target', fmtPrice(forecast.target2)));
+    const entryMid = (Number(forecast.entryLow) + Number(forecast.entryHigh)) / 2;
+    const bandTop = y(Number(forecast.entryHigh));
+    const bandBottom = y(Number(forecast.entryLow));
+    levels.push(`<rect class="level-entry-zone" x="0" y="${bandTop.toFixed(1)}" width="${plotW}" height="${Math.max(3, bandBottom - bandTop).toFixed(1)}"/>`);
+    const levelLine = (value, cls, label, level) => {
+      const yy = y(value).toFixed(1);
+      return `<g class="level ${cls}" data-level="${level}">`
+        + `<rect class="level-hit" x="0" y="${(Number(yy) - 7).toFixed(1)}" width="${plotW}" height="14"/>`
+        + `<line class="level-line ${cls}" x1="0" y1="${yy}" x2="${plotW}" y2="${yy}"/>`
+        + `<text class="level-text ${cls}" x="${plotW + 9}" y="${(Number(yy) + 4).toFixed(1)}">${esc(label)}</text>`
+        + `</g>`;
+    };
+    levels.push(levelLine(forecast.stop, 'stop', `стоп ${fmtPrice(forecast.stop)}`, 'stop'));
+    levels.push(levelLine(entryMid, 'entry', `вход ${fmtPrice(entryMid)}`, 'entry'));
+    levels.push(levelLine(forecast.target1, 'target', `цель1 ${fmtPrice(forecast.target1)}`, 'target1'));
+    levels.push(levelLine(forecast.target2, 'target soft', `цель2 ${fmtPrice(forecast.target2)}`, 'target2'));
   }
 
   // Сделки демо-счёта: точки входа (треугольник) и выхода (кружок) на свечах.
@@ -261,21 +351,25 @@ function drawChart(candles, range = state.range) {
     return `<path class="trade-dot entry ${up ? 'up' : 'down'}" d="M ${cx.toFixed(1)} ${(cy + (up ? 6 : -6)).toFixed(1)} l -5 ${up ? 8 : -8} l 10 0 Z"/>`;
   }).join('');
 
-  const lastClose = closes.at(-1);
-  const lastDot = `<circle class="chart-last-dot" cx="${x(data.length - 1).toFixed(1)}" cy="${y(lastClose).toFixed(1)}" r="3.5"/>`;
-  svg.innerHTML = `${grid}${candlesMarkup}${volumeBars}${levels.join('')}${tradeDots}${lastDot}`;
+  const lastClose = Number(data.at(-1).close);
+  const lastY = y(lastClose).toFixed(1);
+  const priceTag = `<g class="last-tag"><line class="last-tag-line" x1="0" y1="${lastY}" x2="${plotW}" y2="${lastY}"/><rect class="last-tag-bg" x="${plotW + 2}" y="${(Number(lastY) - 10).toFixed(1)}" width="${padRight - 6}" height="20" rx="3"/><text class="last-tag-text" x="${plotW + 9}" y="${(Number(lastY) + 4).toFixed(1)}">${fmtPrice(lastClose)}</text></g>`;
+  const crosshair = '<g class="crosshair" id="chart-crosshair" style="display:none"><line class="cross-line" id="cross-x" x1="0" y1="0" x2="0" y2="0"/><line class="cross-line" id="cross-y" x1="0" y1="0" x2="0" y2="0"/><rect class="cross-price-bg" id="cross-price-bg" x="0" y="0" width="76" height="20" rx="3"/><text class="cross-price" id="cross-price" x="0" y="0">—</text></g>';
+  svg.innerHTML = `${grid}${levels.join('')}${candlesMarkup}${tradeDots}${priceTag}${timeAxis}${crosshair}`;
   attachChartHover(svg);
 }
 
 function attachChartHover(svg) {
   const tooltip = $('#chart-tooltip');
-  const { data, min, max, plotW, priceHeight } = state.chart;
+  const crosshair = $('#chart-crosshair');
   const onMove = (event) => {
+    const chart = state.chart;
+    if (!chart.data.length) return;
     const rect = svg.getBoundingClientRect();
-    const relX = ((event.clientX - rect.left) / rect.width) * state.chart.width;
-    if (relX < 0 || relX > plotW) { tooltip.classList.add('hidden'); return; }
-    const index = Math.round((relX / plotW) * (data.length - 1));
-    const item = data[Math.max(0, Math.min(data.length - 1, index))];
+    const relX = ((event.clientX - rect.left) / rect.width) * chart.width;
+    if (relX < 0 || relX > chart.plotW) { tooltip.classList.add('hidden'); if (crosshair) crosshair.style.display = 'none'; return; }
+    const index = Math.max(0, Math.min(chart.data.length - 1, Math.floor(relX / (chart.plotW / chart.data.length))));
+    const item = chart.data[index];
     if (!item) return;
     const up = Number(item.close) >= Number(item.open);
     const time = item.time ? new Date(item.time).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -285,8 +379,22 @@ function attachChartHover(svg) {
     const py = ((event.clientY - rect.top) / rect.height) * 100;
     tooltip.style.left = `min(calc(${px}% + 14px), calc(100% - 190px))`;
     tooltip.style.top = `max(8px, calc(${py}% - 20px))`;
+    if (crosshair) {
+      const cx = chart.x(index);
+      const cy = chart.y(Number(item.close));
+      crosshair.style.display = '';
+      $('#cross-x').setAttribute('x1', cx); $('#cross-x').setAttribute('x2', cx);
+      $('#cross-x').setAttribute('y1', chart.padTop); $('#cross-x').setAttribute('y2', chart.padTop + chart.priceHeight);
+      $('#cross-y').setAttribute('x1', 0); $('#cross-y').setAttribute('x2', chart.plotW);
+      $('#cross-y').setAttribute('y1', cy); $('#cross-y').setAttribute('y2', cy);
+      const bg = $('#cross-price-bg');
+      bg.setAttribute('x', chart.plotW + 2); bg.setAttribute('y', cy - 10);
+      const label = $('#cross-price');
+      label.setAttribute('x', chart.plotW + 9); label.setAttribute('y', cy + 4);
+      label.textContent = fmtPrice(Number(item.close));
+    }
   };
-  const onLeave = () => tooltip.classList.add('hidden');
+  const onLeave = () => { tooltip.classList.add('hidden'); if (crosshair) crosshair.style.display = 'none'; };
   svg.onmousemove = onMove;
   svg.onmouseleave = onLeave;
 }
@@ -479,6 +587,7 @@ async function loadHistory() {
 function renderTrading(data) {
   if (!data?.snapshot) return;
   const snap = data.snapshot;
+  state.tradingSnapshot = snap;
   $('#trading-equity').textContent = fmtRub(snap.totalEquityRub ?? 0);
   $('#trading-cash').textContent = fmtRub(snap.cashRub);
   $('#trading-position').textContent = snap.positionGrams !== 0 ? `${fmtGrams(Math.abs(snap.positionGrams))} ${snap.positionGrams > 0 ? '(лонг)' : '(шорт)'}` : '—';
@@ -694,12 +803,29 @@ function bindEvents() {
     input.type = input.type === 'password' ? 'text' : 'password';
     button.textContent = input.type === 'password' ? 'СКРЫТЬ' : 'ПОКАЗАТЬ';
   }));
-  $('#horizon-grid').addEventListener('click', (event) => {
-    const card = event.target.closest('.horizon-card');
-    if (!card) return;
-    state.chartHorizon = state.chartHorizon === card.dataset.horizon ? null : card.dataset.horizon;
+  // Выбор сценария работает и из карточек, и из чипов прямо над графиком.
+  const selectHorizon = (horizon) => {
+    state.chartHorizon = state.chartHorizon === horizon ? null : horizon;
     if (state.market) drawChart(state.market.candles, state.range);
     renderForecasts(state.forecasts);
+  };
+  $('#horizon-grid').addEventListener('click', (event) => {
+    const card = event.target.closest('.horizon-card');
+    if (card) selectHorizon(card.dataset.horizon);
+  });
+  $('#chart-horizons').addEventListener('click', (event) => {
+    const chip = event.target.closest('.chart-chip');
+    if (!chip) return;
+    const horizon = chip.dataset.horizon;
+    state.chartHorizon = horizon || null;
+    if (state.market) drawChart(state.market.candles, state.range);
+    renderForecasts(state.forecasts);
+  });
+  // Клик по линии уровня на графике подсвечивает его — так видно, какой именно уровень активен.
+  $('#price-chart').addEventListener('click', (event) => {
+    const level = event.target.closest('.level');
+    if (!level) return;
+    $$('#price-chart .level').forEach((node) => node.classList.toggle('focused', node === level));
   });
   // Торговля
   $('#trade-submit').addEventListener('click', submitTrade);

@@ -4,6 +4,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { URL } = require('node:url');
 const { analyzeMarket, evaluateForecasts, DEFAULT_HORIZONS } = require('./src/analysis');
+const newsSources = require('./src/news');
 const trading = require('./src/trading');
 
 const ROOT = __dirname;
@@ -455,6 +456,28 @@ function localNews() {
   return Array.isArray(articles) ? articles : [];
 }
 
+// Российские ленты кэшируются: обновляем раз в 15 минут, чтобы не долбить RSS
+// на каждом пятисекундном опросе рынка. Ошибка сети не должна ломать /api/market.
+let newsCache = null;
+let newsCacheAt = 0;
+const NEWS_CACHE_MS = 15 * 60_000;
+
+async function russianNews() {
+  const age = Date.now() - newsCacheAt;
+  if (newsCache && age < NEWS_CACHE_MS) return newsCache;
+  try {
+    const collected = await newsSources.collectNews({ token: process.env.WEBZ_API_TOKEN });
+    newsCache = collected;
+    newsCacheAt = Date.now();
+    writeJson(path.join(DATA_DIR, 'news.json'), collected.items);
+    writeJson(path.join(DATA_DIR, 'news-impact.json'), { impact: collected.impact, feeds: collected.feeds, fetchedAt: collected.fetchedAt });
+    return collected;
+  } catch (error) {
+    if (newsCache) return newsCache;
+    return { items: localNews(), impact: { enabled: false, note: `Новостные ленты недоступны: ${error.message}` }, feeds: [], fetchedAt: null, webzEnabled: false };
+  }
+}
+
 async function getGdeltNews() {
   const url = new URL('https://api.gdeltproject.org/api/v2/doc/doc');
   url.searchParams.set('query', '(gold OR золото OR XAU) (Russia OR рубль OR rouble OR Россия)');
@@ -564,14 +587,16 @@ async function handleApi(req, res, url) {
       const forecasts = readJson(FORECASTS_PATH, []);
       const evaluated = evaluateForecasts(forecasts, market.candles, Date.now(), market.longCandles || [], market.dailyCandles || []);
       if (evaluated.changed) writeJson(FORECASTS_PATH, evaluated.forecasts);
+      const ruNews = await russianNews();
       const analysis = analyzeMarket(latestQuotes(market.candles), {
         provider: market.provider,
         instrument: market.instrument,
         timestamp: market.fetchedAt,
         longCandles: market.longCandles,
         dailyCandles: market.dailyCandles,
+        news: ruNews.impact,
       });
-      const news = localNews();
+      const news = ruNews.items;
       const sanitized = evaluated.forecasts.map(sanitizeForecast);
       analysis.forecasts = (analysis.forecasts || []).map(sanitizeForecast);
       return send(res, 200, {
@@ -580,6 +605,8 @@ async function handleApi(req, res, url) {
         forecasts: sanitized,
         scorecard: scorecard(sanitized),
         news,
+        newsImpact: ruNews.impact,
+        newsFeeds: ruNews.feeds,
         horizons: DEFAULT_HORIZONS,
         settings: safeSettings(),
       });
@@ -593,12 +620,14 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'POST' && url.pathname === '/api/refresh') {
     const market = await chooseProvider(config);
+    const ruNews = await russianNews();
     const analysis = analyzeMarket(latestQuotes(market.candles), {
       provider: market.provider,
       instrument: market.instrument,
       timestamp: market.fetchedAt,
       longCandles: market.longCandles,
       dailyCandles: market.dailyCandles,
+      news: ruNews.impact,
     });
     const forecasts = readJson(FORECASTS_PATH, []);
     const fresh = analysis.forecasts.map((forecast) => {
@@ -621,7 +650,7 @@ async function handleApi(req, res, url) {
     });
     const merged = [...fresh, ...forecasts].slice(0, 1000);
     writeJson(FORECASTS_PATH, merged);
-    const news = localNews();
+    const news = ruNews.items;
     let explanation = null;
     let aiError = null;
     try {
@@ -651,13 +680,26 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === 'GET' && url.pathname === '/api/news') {
-    try {
-      const news = await getGdeltNews();
-      writeJson(path.join(DATA_DIR, 'news.json'), news);
-      return send(res, 200, { news, source: 'GDELT', updatedAt: new Date().toISOString(), note: 'Покрытие зависит от доступности GDELT; новостной поиск может быть неполным.' });
-    } catch (error) {
-      return send(res, 200, { news: localNews(), source: 'cache', error: error.message, note: 'Недавние кешированные заголовки или пустой список; это не полная новостная лента.' });
-    }
+    const force = new URL(req.url, 'http://localhost').searchParams.get('refresh') === '1';
+    if (force) { newsCache = null; newsCacheAt = 0; }
+    const collected = await russianNews();
+    let gdelt = [];
+    let gdeltError = null;
+    try { gdelt = await getGdeltNews(); } catch (error) { gdeltError = error.message; }
+    const merged = [...collected.items, ...gdelt]
+      .filter((item, index, all) => all.findIndex((other) => (other.url || other.title) === (item.url || item.title)) === index)
+      .sort((a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0));
+    return send(res, 200, {
+      news: merged,
+      impact: collected.impact,
+      feeds: collected.feeds,
+      webzEnabled: collected.webzEnabled,
+      source: 'РФ RSS + GDELT',
+      updatedAt: collected.fetchedAt,
+      note: gdeltError
+        ? 'Российские ленты доступны; мировой GDELT временно не отвечает.'
+        : 'Российские ленты (ЦБ РФ, Интерфакс, ТАСС и др.) плюс мировой GDELT. Тональная оценка — эвристика по заголовкам, не полноценный фундаментальный анализ.',
+    });
   }
 
   // ---------- Демо-счёт и торговля ----------

@@ -136,6 +136,12 @@
           </article>
           <article class="card order-card">
             <div class="card-label">НОВАЯ ЗАЯВКА</div>
+            <div class="spec-strip" id="trade-spec">
+              <span>Инструмент <b id="spec-ticker">—</b></span>
+              <span>Лот <b id="spec-lot">—</b></span>
+              <span>Шаг цены <b id="spec-tick">—</b></span>
+              <span>Шорт <b id="spec-short">—</b></span>
+            </div>
             <div class="trade-types">
               <button class="trade-type buy active" data-side="buy">Купить</button>
               <button class="trade-type sell" data-side="sell">Продать</button>
@@ -147,6 +153,18 @@
             </div>
             <button class="button button-buy" id="trade-submit">Купить по рынку</button>
             <div class="trade-note" id="trade-levels">Уровни из сценариев: —</div>
+            <div class="trade-note" id="trade-fill">Исполнение рассчитывается по стакану.</div>
+          </article>
+          <article class="card book-card">
+            <div class="card-head-row"><div class="card-label">СТАКАН</div><span class="muted-note" id="book-source">—</span></div>
+            <div class="book-stats" id="book-stats"><div class="empty-state compact">Загружаем стакан…</div></div>
+            <div class="book-ladder" id="book-ladder"></div>
+            <div class="trade-note" id="book-note">Заявки исполняются по уровням: лимитная — до её цены, рыночная — по всей доступной глубине.</div>
+          </article>
+          <article class="card metrics-card">
+            <div class="card-head-row"><div class="card-label">EXACTANCY И ПРОСАДКА</div></div>
+            <div class="metrics-grid" id="metrics-grid"><div class="empty-state compact">Нет закрытых сделок</div></div>
+            <div class="trade-note" id="metrics-note"></div>
           </article>
           <article class="card auto-card">
             <div class="card-head-row"><div class="card-label">АВТОТОРГОВЛЯ</div><span class="live-badge" id="auto-state-badge"><i id="auto-dot"></i><span id="auto-state">выключена</span></span></div>
@@ -162,6 +180,17 @@
         <div class="bottom-grid">
           <article class="card"><div class="card-head-row"><div class="card-label">АКТИВНЫЕ ЗАЯВКИ</div></div><div id="orders-list" class="orders-list"><div class="empty-state compact">Нет активных заявок</div></div></article>
           <article class="card"><div class="card-head-row"><div class="card-label">ЖУРНАЛ СДЕЛОК</div></div><div id="trades-list" class="trades-list"><div class="empty-state compact">Сделок пока нет</div></div></article>
+          <article class="card news-model-card">
+            <div class="card-head-row"><div class="card-label">НОВОСТНАЯ МОДЕЛЬ · отдельный сигнал</div><span class="muted-note" id="news-model-horizon">—</span></div>
+            <div class="news-model-main">
+              <span class="news-model-action" id="news-model-action">—</span>
+              <span class="news-model-conf" id="news-model-conf">уверенность —</span>
+            </div>
+            <p class="news-model-rationale" id="news-model-rationale">Модель работает только по заголовкам и не использует свечи.</p>
+            <div class="news-model-levels" id="news-model-levels"></div>
+            <div class="news-model-drivers" id="news-model-drivers"></div>
+            <div class="news-model-score" id="news-model-score"></div>
+          </article>
         </div>
       </section>
 
@@ -206,6 +235,17 @@
               <label class="form-label">API-токен</label>
               <div class="input-with-action"><input id="t-invest-token" class="text-input" type="password" placeholder="Вставьте токен" autocomplete="off" spellcheck="false"><button class="toggle-secret" data-target="t-invest-token">ПОКАЗАТЬ</button></div>
               <div class="connection-actions"><button class="button button-secondary" id="test-t-invest">Проверить токен</button><button class="button button-primary" id="save-t-invest">Сохранить</button><span id="t-test-result" class="muted-note"></span></div>
+              <div class="instrument-switcher">
+                <div class="card-label">ИНСТРУМЕНТ</div>
+                <div class="instrument-row">
+                  <select id="instrument-select" class="text-input"><option value="">Загружаем список…</option></select>
+                  <button class="button button-secondary" id="instrument-apply">Переключить</button>
+                  <button class="button button-ghost" id="instrument-reload">Обновить список</button>
+                </div>
+                <div class="spec-detail" id="instrument-spec">Спецификация (лот, шаг цены, возможность шорта) подтягивается из T‑Invest API.</div>
+                <label class="form-label" for="fee-rate">Комиссия, % от оборота</label>
+                <div class="instrument-row"><input id="fee-rate" class="text-input" type="number" min="0" max="5" step="0.005" value="0.05"><button class="button button-secondary" id="fee-save">Сохранить</button></div>
+              </div>
             </article>
             <article class="card connection-card">
               <div class="card-head-row"><h3>Yandex AI Studio</h3><span id="ai-status" class="pill">ОТКЛЮЧЁН</span></div>
@@ -239,5 +279,6 @@
   </div>
   <div id="toast-region" class="toast-region" aria-live="polite"></div>
   <script src="/app.js" defer></script>
+  <script src="/app-trading.js" defer></script>
 </body>
 </html>

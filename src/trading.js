@@ -10,9 +10,37 @@ const DATA_DIR = path.join(__dirname, '..', 'data');
 const TRADING_PATH = path.join(DATA_DIR, 'trading.json');
 
 const START_RUB = 100000;
-const FEE_RATE = 0.0005; // комиссия 0.05%
-const MIN_LOT_GR = 1; // минимальный лот, г
-const QUANTITY_STEP_GR = 0.01;
+const DEFAULT_FEE_RATE = 0.0005; // комиссия 0.05%
+const FALLBACK_LOT_GR = 1; // минимальный лот, г
+const FALLBACK_STEP_GR = 0.01;
+
+// Лот и шаг цены приходят из спецификации инструмента в T-Invest API. Значения ниже —
+// запасной вариант на случай, пока API недоступен; он не должен маскировать проблему.
+function specOf(state) {
+  const spec = state.spec || {};
+  const lot = Number(spec.lot) > 0 ? Number(spec.lot) : FALLBACK_LOT_GR;
+  const minPriceIncrement = Number(spec.minPriceIncrement) > 0 ? Number(spec.minPriceIncrement) : FALLBACK_STEP_GR;
+  return {
+    ticker: spec.ticker || 'GLDRUB_TOM',
+    lot,
+    minPriceIncrement,
+    shortCapable: spec.shortCapable === true,
+    fromBroker: Boolean(spec.ticker),
+  };
+}
+
+function feeRateOf(state) {
+  const rate = Number(state.autoTrading?.feeRate ?? state.feeRate);
+  return Number.isFinite(rate) && rate >= 0 ? rate : DEFAULT_FEE_RATE;
+}
+
+// Округление объёма вниз до кратного лота: частичный лот заявка не примет.
+function normalizeGrams(grams, spec) {
+  const step = spec.lot;
+  const raw = Number(grams);
+  if (!Number.isFinite(raw) || step <= 0) return 0;
+  return round2(Math.floor(raw / step + 1e-9) * step);
+}
 
 let timer = null;
 
@@ -60,11 +88,11 @@ function orderBook(state) {
   return state.orders.filter((order) => order.status === 'open');
 }
 
-function applyFill(state, order, priceRubPerG, now) {
+function applyFill(state, order, priceRubPerG, now, fill = null, gramsOverride = null) {
   const price = round2(Number(priceRubPerG));
-  const grams = order.grams;
+  const grams = gramsOverride == null ? order.grams : gramsOverride;
   const gross = round2(grams * price);
-  const fee = round2(gross * FEE_RATE);
+  const fee = round2(gross * feeRateOf(state));
   let pnl = null;
   const prevQty = state.positionGrams || 0;
   // Стандартная модель брокерского счёта:
@@ -161,29 +189,92 @@ function applyFill(state, order, priceRubPerG, now) {
     realizedPnlRub: pnl,
     metaStop: order.metaStop ?? null,
     metaTarget: order.metaTarget ?? null,
+    // Данные о реальном исполнении: без них проскальзывание не посчитать.
+    riskRub: order.riskRub ?? null,
+    slippageRub: fill ? round2(fill.slippageRub || 0) : null,
+    levelsUsed: fill ? fill.levelsUsed : null,
+    execution: fill ? (fill.bookless ? 'по последней котировке, стакан недоступен' : `по стакану, уровней: ${fill.levelsUsed}`) : null,
   };
   state.trades.unshift(trade);
   state.trades = state.trades.slice(0, 500);
   return trade;
 }
 
-function processOpenOrders(state, priceRubPerG, now) {
+// Исполнение лимитной заявки по стакану: забираем уровни, пока цена позволяет.
+// Если стакана нет, откатываемся на последнюю котировку и честно помечаем это.
+function processOpenOrders(state, priceRubPerG, now, book = null) {
   const price = Number(priceRubPerG);
   const fills = [];
   for (const order of orderBook(state)) {
     if (!Number.isFinite(price) || price <= 0) break;
-    const hit = order.side === 'buy' ? price <= order.limitPrice : price >= order.limitPrice;
-    if (hit) {
-      try {
-        fills.push(applyFill(state, order, Math.min(order.limitPrice, price) === Infinity ? order.limitPrice : price, now));
-      } catch (error) {
-        order.status = 'rejected';
-        order.cancelledAt = now;
-        order.reason = `Отклонена: ${error.message}`;
+    const limit = Number(order.limitPrice);
+    if (!Number.isFinite(limit)) continue;
+    const eligible = filterEligibleLevels(book, order.side, limit);
+    if (!eligible.length) continue;
+    const remaining = Number(order.grams) - Number(order.filledGrams || 0);
+    if (remaining <= 0) {
+      order.status = 'filled';
+      order.filledAt = now;
+      continue;
+    }
+    try {
+      const fill = fillFromLevels(eligible, remaining);
+      if (!fill || fill.filledGrams <= 0) continue;
+      // applyFill мутирует саму заявку: статус и счётчик исполненного должны обновиться
+      // в исходном объекте, иначе частичное исполнение теряется.
+      const trade = applyFill(state, order, fill.avgPrice, now, fill, fill.filledGrams);
+      fills.push(trade);
+      if (fill.remainingGrams > 0) {
+        // Книга кончилась раньше заявки — остаток остаётся висеть.
+        order.status = 'open';
+        order.remainingGrams = fill.remainingGrams;
+        order.partialFills = [...(order.partialFills || []), { at: now, grams: fill.filledGrams, price: fill.avgPrice }];
       }
+    } catch (error) {
+      order.status = 'rejected';
+      order.cancelledAt = now;
+      order.reason = `Отклонена: ${error.message}`;
     }
   }
   return fills;
+}
+
+// Уровни книги, доступные для лимита: покупка — аски не выше лимита, продажа — биды не ниже.
+function filterEligibleLevels(book, side, limitPrice) {
+  if (!book) return [];
+  const rows = side === 'buy' ? book.asks : book.bids;
+  return (rows || []).filter((row) => Number(row.price) > 0 && (side === 'buy' ? Number(row.price) <= limitPrice : Number(row.price) >= limitPrice));
+}
+
+// Проход по уровням до полного или частичного исполнения.
+function fillFromLevels(levels, grams) {
+  let remaining = Math.abs(Number(grams));
+  let cost = 0;
+  let filled = 0;
+  const consumed = [];
+  for (const level of levels) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining, Number(level.quantity));
+    if (take <= 0) continue;
+    cost += take * Number(level.price);
+    filled += take;
+    remaining -= take;
+    consumed.push({ price: round2(Number(level.price)), grams: round2(take) });
+  }
+  if (filled <= 0) return null;
+  const best = consumed[0].price;
+  const worst = consumed[consumed.length - 1].price;
+  return {
+    filledGrams: round2(filled),
+    remainingGrams: round2(Math.max(0, remaining)),
+    avgPrice: round2(cost / filled),
+    bestPrice: best,
+    worstPrice: worst,
+    levelsUsed: consumed.length,
+    levels: consumed,
+    slippageRub: round2((worst - best) * filled),
+    exhausted: remaining > 0.0001,
+  };
 }
 
 function cancelOrder(state, id, now) {
@@ -194,12 +285,16 @@ function cancelOrder(state, id, now) {
   return order;
 }
 
-function placeOrder(state, { side, grams, limitPrice, reason, source, marketPrice }) {
-  const quantity = round2(Math.floor(Number(grams) / QUANTITY_STEP_GR) * QUANTITY_STEP_GR);
-  if (!Number.isFinite(quantity) || quantity < MIN_LOT_GR) {
-    throw Object.assign(new Error(`Минимальный лот ${MIN_LOT_GR} г (шаг ${QUANTITY_STEP_GR} г)`), { statusCode: 400 });
+function placeOrder(state, { side, grams, limitPrice, reason, source, marketPrice, book, riskRub }) {
+  const spec = specOf(state);
+  const quantity = normalizeGrams(grams, spec);
+  if (!Number.isFinite(quantity) || quantity < spec.lot - 1e-9) {
+    throw Object.assign(new Error(`Минимальный лот по спецификации ${spec.ticker}: ${spec.lot} г${spec.fromBroker ? '' : ' (запасное значение, спецификация брокера не получена)'}`), { statusCode: 400 });
   }
   if (!['buy', 'sell'].includes(side)) throw Object.assign(new Error('side должен быть buy|sell'), { statusCode: 400 });
+  if (side === 'sell' && Number(state.positionGrams || 0) >= 0 && !spec.shortCapable) {
+    throw Object.assign(new Error(`${spec.ticker}: спот, короткая продажа недоступна. Переключите инструмент на производный или закройте лонг.`), { statusCode: 400 });
+  }
   const price = Number(marketPrice);
   if (!Number.isFinite(price) || price <= 0) throw Object.assign(new Error('Нет котировки для заявки'), { statusCode: 502 });
   const order = {
@@ -209,14 +304,29 @@ function placeOrder(state, { side, grams, limitPrice, reason, source, marketPric
     type: limitPrice != null ? 'limit' : 'market',
     limitPrice: limitPrice != null ? round2(Number(limitPrice)) : null,
     status: 'open',
+    filledGrams: 0,
     createdAt: new Date().toISOString(),
     reason: reason || null,
     source: source || 'manual',
+    riskRub: Number.isFinite(Number(riskRub)) ? round2(Number(riskRub)) : null,
   };
   state.orders.unshift(order);
   state.orders = state.orders.slice(0, 300);
   if (order.type === 'market') {
-    applyFill(state, order, price, new Date().toISOString());
+    // Рыночная заявка исполняется по стакану: реальная средняя цена вместо последнего тика.
+    const levels = filterEligibleLevels(book, side, side === 'buy' ? Number.MAX_SAFE_INTEGER : -Number.MAX_SAFE_INTEGER);
+    const fill = levels.length ? fillFromLevels(levels, quantity) : null;
+    if (fill) {
+      const trade = applyFill(state, order, fill.avgPrice, new Date().toISOString(), fill, fill.filledGrams);
+      if (fill.remainingGrams > 0) {
+        order.status = 'open';
+        order.remainingGrams = fill.remainingGrams;
+        order.partialFills = [{ at: new Date().toISOString(), grams: fill.filledGrams, price: fill.avgPrice }];
+        trade.partial = true;
+      }
+    } else {
+      applyFill(state, order, price, new Date().toISOString(), { bookless: true, slippageRub: 0 });
+    }
   }
   return order;
 }
@@ -277,13 +387,74 @@ function decideFromForecasts(forecasts, price) {
   };
 }
 
-function autoTradeTick({ market, forecasts }) {
+// Expectancy и просадка. Expectancy — средний результат закрытой сделки; в единицах R
+// она показывает, перевешивает ли средняя прибыль средний убыток вместе с издержками.
+function performanceMetrics(state) {
+  const closed = (state.trades || []).filter((trade) => trade.realizedPnlRub != null);
+  const wins = closed.filter((trade) => trade.realizedPnlRub > 0);
+  const losses = closed.filter((trade) => trade.realizedPnlRub < 0);
+  const sum = (rows) => rows.reduce((acc, row) => acc + row.realizedPnlRub, 0);
+  const totalWins = sum(wins);
+  const totalLosses = Math.abs(sum(losses));
+
+  const curve = (state.equityCurve || []).slice().reverse();
+  let peak = null;
+  let maxDrawdownRub = 0;
+  let maxDrawdownPct = 0;
+  let currentDrawdownRub = 0;
+  let currentDrawdownPct = 0;
+  for (const point of curve) {
+    const equity = Number(point.equityRub);
+    if (!Number.isFinite(equity)) continue;
+    if (peak === null || equity > peak) peak = equity;
+    const dd = peak - equity;
+    const ddPct = peak > 0 ? (dd / peak) * 100 : 0;
+    if (dd > maxDrawdownRub) { maxDrawdownRub = dd; maxDrawdownPct = ddPct; }
+    currentDrawdownRub = dd;
+    currentDrawdownPct = ddPct;
+  }
+
+  // R считаем по зафиксированному риску сделки; если он неизвестен, сделка в R не идёт.
+  const inR = closed.filter((trade) => Number(trade.riskRub) > 0);
+  const rSum = inR.reduce((acc, trade) => acc + trade.realizedPnlRub / trade.riskRub, 0);
+
+  return {
+    trades: closed.length,
+    wins: wins.length,
+    losses: losses.length,
+    winRate: closed.length ? round2((wins.length / closed.length) * 100) : null,
+    grossProfitRub: round2(totalWins),
+    grossLossRub: round2(totalLosses),
+    netPnlRub: round2(totalWins - totalLosses),
+    // Expectancy в рублях и в долях риска — это разные вопросы об одном и том же.
+    expectancyRub: closed.length ? round2((totalWins - totalLosses) / closed.length) : null,
+    expectancyR: inR.length ? round2(rSum / inR.length) : null,
+    tradesInR: inR.length,
+    avgWinRub: wins.length ? round2(totalWins / wins.length) : null,
+    avgLossRub: losses.length ? round2(totalLosses / losses.length) : null,
+    profitFactor: totalLosses > 0 ? round2(totalWins / totalLosses) : (totalWins > 0 ? null : null),
+    payoffRatio: losses.length && wins.length ? round2((totalWins / wins.length) / (totalLosses / losses.length)) : null,
+    maxDrawdownRub: round2(maxDrawdownRub),
+    maxDrawdownPct: round2(maxDrawdownPct),
+    currentDrawdownRub: round2(currentDrawdownRub),
+    currentDrawdownPct: round2(currentDrawdownPct),
+    peakEquityRub: peak == null ? null : round2(peak),
+    feesRub: round2((state.trades || []).reduce((acc, trade) => acc + Number(trade.feeRub || 0), 0)),
+    slippageRub: round2((state.trades || []).reduce((acc, trade) => acc + Number(trade.slippageRub || 0), 0)),
+    points: curve.length,
+    note: inR.length < closed.length
+      ? `В единицах R учтено ${inR.length} из ${closed.length} сделок: риск фиксируется только для сделок, открытых со стопом.`
+      : null,
+  };
+}
+
+function autoTradeTick({ market, forecasts, book = null }) {
   const state = readState();
   const price = Number(market?.candles?.at(-1)?.close || market?.quote?.last);
   if (!Number.isFinite(price) || price <= 0) return { state, snapshot: snapshot(state, NaN), events: [{ type: 'skip', why: 'Нет котировки' }] };
   const now = new Date().toISOString();
   const events = [];
-  const fills = processOpenOrders(state, price, now);
+  const fills = processOpenOrders(state, price, now, book);
   fills.forEach((trade) => events.push({ type: 'fill', trade }));
 
   if (!state.autoTrading.enabled) {
@@ -329,9 +500,12 @@ function autoTradeTick({ market, forecasts }) {
     const decision = decideFromForecasts(forecasts || [], price);
     if (decision.doTrade) {
       const budget = Math.min(Number(state.autoTrading.maxOrderRub) || 20000, state.cashRub);
-      const grams = Math.floor((budget / price) / QUANTITY_STEP_GR) * QUANTITY_STEP_GR;
-      if (grams >= MIN_LOT_GR) {
-        const order = placeOrder(state, { side: decision.side, grams, marketPrice: price, reason: decision.why, source: 'auto' });
+      const spec = specOf(state);
+      const grams = normalizeGrams(budget / price, spec);
+      if (grams >= spec.lot - 1e-9) {
+        const entryRef = decision.entry || (Number(decision.entryLow) + Number(decision.entryHigh)) / 2 || price;
+        const riskRub = round2(grams * Math.abs(entryRef - Number(decision.stop || price)));
+        const order = placeOrder(state, { side: decision.side, grams, marketPrice: price, reason: decision.why, source: 'auto', book, riskRub });
         // Запоминаем уровни сценария для ведения позиции.
         state.openPosition = {
           stop: Number.isFinite(Number(decision.stop)) ? Number(decision.stop) : null,
@@ -402,7 +576,13 @@ module.exports = {
   startAutoTrading,
   stopAutoTrading,
   autoTradingStatus,
-  FEE_RATE,
+  DEFAULT_FEE_RATE,
   START_RUB,
-  MIN_LOT_GR,
+  FALLBACK_LOT_GR,
+  specOf,
+  normalizeGrams,
+  feeRateOf,
+  fillFromLevels,
+  filterEligibleLevels,
+  performanceMetrics,
 };

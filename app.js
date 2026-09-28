@@ -92,6 +92,8 @@ async function loadMarket({ quiet = false } = {}) {
     state.history = data.forecasts || [];
     state.news = data.news || [];
     state.newsImpact = data.newsImpact || null;
+    state.newsScenario = data.newsScenario || null;
+    state.newsScorecard = data.newsScorecard || null;
     state.scorecard = data.scorecard;
     renderAll(data.settings);
   } catch (error) {
@@ -109,6 +111,7 @@ function renderAll(config) {
   renderHistory(state.history, state.scorecard);
   renderNewsPreview(state.news);
   renderNewsImpactBadge();
+  if (state.newsScenario) renderNewsModel({ scenario: state.newsScenario, scorecard: state.newsScorecard });
   renderConfig(config);
   setMarketState(state.market?.provider, false, state.market?.dataStatus);
   $('#history-count').textContent = String(state.history.length);
@@ -584,6 +587,160 @@ async function loadHistory() {
 
 // ============ ТОРГОВЛЯ ============
 
+// Спецификация инструмента из брокера: лот, шаг цены и возможность шорта.
+// Пока она не получена, интерфейс честно пишет, что работает на запасных значениях.
+function renderSpecStrip(spec) {
+  if (!spec) return;
+  const set = (id, value) => { const el = $(id); if (el) el.textContent = value; };
+  set('#spec-ticker', `${spec.ticker || '—'}${spec.fromBroker ? '' : ' ⚠'}`);
+  set('#spec-lot', `${spec.lot ?? '—'} г`);
+  set('#spec-tick', spec.minPriceIncrement ? `${spec.minPriceIncrement} ₽` : '—');
+  set('#spec-short', spec.shortCapable ? 'возможен' : 'недоступен (спот)');
+  const note = $('#book-note');
+  if (note && !spec.fromBroker) note.textContent = `Спецификация не получена от брокера: ${spec.shortNote || 'используется запасной лот 1 г.'}`;
+  const gramsInput = $('#trade-grams');
+  if (gramsInput && spec.lot) {
+    gramsInput.min = String(spec.lot);
+    gramsInput.step = String(spec.lot);
+    if (Number(gramsInput.value) < spec.lot) gramsInput.value = String(spec.lot);
+  }
+}
+
+function renderOrderBook(book) {
+  const statsHost = $('#book-stats');
+  const ladderHost = $('#book-ladder');
+  const source = $('#book-source');
+  if (!statsHost) return;
+  if (!book || (book.bestBid == null && book.bestAsk == null)) {
+    if (source) source.textContent = 'недоступен';
+    statsHost.innerHTML = `<div class="empty-state compact">${esc(book?.error || 'Стакан недоступен. Заявки исполняются по последней котировке, проскальзывание считается нулевым.')}</div>`;
+    if (ladderHost) ladderHost.innerHTML = '';
+    return;
+  }
+  if (source) source.textContent = book.source === 't-invest' ? 'T‑Invest API' : 'MOEX ISS';
+  statsHost.innerHTML = `
+    <div class="book-stat"><span>Лучший бид</span><b class="down">${fmtPrice(book.bestBid)}</b></div>
+    <div class="book-stat"><span>Лучший аск</span><b class="up">${fmtPrice(book.bestAsk)}</b></div>
+    <div class="book-stat"><span>Спред</span><b>${book.spread != null ? fmtPrice(book.spread) : '—'}${book.spreadPct != null ? ` · ${book.spreadPct}%` : ''}</b></div>
+    <div class="book-stat"><span>Дисбаланс</span><b class="${(book.imbalance || 0) > 0 ? 'up' : (book.imbalance || 0) < 0 ? 'down' : ''}">${book.imbalance != null ? `${fmtSigned(book.imbalance, 1)}%` : '—'}</b></div>`;
+  const levels = book.levels || [];
+  const bids = levels.filter((l) => l.price && book.bestBid != null && l.price <= book.bestBid).slice(0, 5);
+  const asks = levels.filter((l) => l.price && book.bestAsk != null && l.price >= book.bestAsk).slice(0, 5);
+  const maxQty = Math.max(...[...bids, ...asks].map((l) => Number(l.quantity) || 0), 1);
+  if (ladderHost) {
+    ladderHost.innerHTML = [
+      ...bids.map((l) => `<div class="book-row bid"><i style="width:${((Number(l.quantity) || 0) / maxQty * 100).toFixed(0)}%"></i><span>${fmtPrice(l.price)}</span><b>${(Number(l.quantity) || 0).toFixed(2)}</b></div>`),
+      `<div class="book-spread">спред ${book.spread != null ? fmtPrice(book.spread) : '—'} ₽</div>`,
+      ...asks.slice().reverse().map((l) => `<div class="book-row ask"><i style="width:${((Number(l.quantity) || 0) / maxQty * 100).toFixed(0)}%"></i><span>${fmtPrice(l.price)}</span><b>${(Number(l.quantity) || 0).toFixed(2)}</b></div>`),
+    ].join('');
+  }
+}
+
+// Expectancy в рублях и в R, максимальная и текущая просадка.
+function renderMetrics(metrics) {
+  const host = $('#metrics-grid');
+  if (!host) return;
+  if (!metrics || !metrics.trades) {
+    host.innerHTML = '<div class="empty-state compact">Нет закрытых сделок — метрики появятся после первой фиксации результата.</div>';
+    $('#metrics-note').textContent = '';
+    return;
+  }
+  const cell = (label, value, tone = '') => `<div class="metric-cell ${tone}"><span>${label}</span><b>${value}</b></div>`;
+  host.innerHTML = [
+    cell('Expectancy, ₽/сделку', fmtSigned(metrics.expectancyRub, 2), metrics.expectancyRub > 0 ? 'up' : metrics.expectancyRub < 0 ? 'down' : ''),
+    cell('Expectancy, R', metrics.expectancyR != null ? fmtSigned(metrics.expectancyR, 2) : '—', metrics.expectancyR > 0 ? 'up' : metrics.expectancyR < 0 ? 'down' : ''),
+    cell('Винрейт', `${metrics.winRate}%`),
+    cell('Profit factor', metrics.profitFactor != null ? metrics.profitFactor : '—'),
+    cell('Сделок', `${metrics.trades} (${metrics.wins}／${metrics.losses})`),
+    cell('Средний убыток', metrics.avgLossRub != null ? fmtRub(metrics.avgLossRub) : '—', 'down'),
+    cell('Макс. просадка', `${fmtRub(metrics.maxDrawdownRub)} · ${metrics.maxDrawdownPct}%`, 'down'),
+    cell('Текущая просадка', `${fmtRub(metrics.currentDrawdownRub)} · ${metrics.currentDrawdownPct}%`, metrics.currentDrawdownRub > 0 ? 'down' : ''),
+    cell('Проскальзывание', fmtRub(metrics.slippageRub), metrics.slippageRub > 0 ? 'down' : ''),
+    cell('Комиссии', fmtRub(metrics.feesRub)),
+  ].join('');
+  $('#metrics-note').textContent = metrics.note || 'Expectancy в R считается только по сделкам, у которых был зафиксирован риск до стопа.';
+}
+
+// Новостная модель показывается отдельно от технических сценариев.
+function renderNewsModel(payload) {
+  const scenario = payload?.scenario;
+  const scorecard = payload?.scorecard;
+  if (!scenario) return;
+  const action = $('#news-model-action');
+  const horizon = $('#news-model-horizon');
+  const rationale = $('#news-model-rationale');
+  const levels = $('#news-model-levels');
+  const drivers = $('#news-model-drivers');
+  const score = $('#news-model-score');
+  if (action) {
+    action.textContent = scenario.actionLabel || 'НЕТ СИГНАЛА';
+    action.className = `news-model-action ${scenario.action}`;
+  }
+  if (horizon) horizon.textContent = scenario.horizonLabel && scenario.horizonLabel !== '—' ? `горизонт ${scenario.horizonLabel} · согласие источников ${Math.round((scenario.agreement || 0) * 100)}%` : 'нет данных';
+  const conf = $('#news-model-conf');
+  if (conf) conf.textContent = `уверенность ${scenario.confidence}%`;
+  if (rationale) rationale.textContent = scenario.rationale || '';
+  if (levels) {
+    levels.innerHTML = scenario.available ? `
+      <div><span>ожидаемый ход</span><b>${scenario.expectedMovePct}%</b></div>
+      <div><span>вход</span><b>${fmtPrice(scenario.entry)}</b></div>
+      <div class="down"><span>стоп</span><b>${fmtPrice(scenario.stop)}</b></div>
+      <div class="up"><span>цель 1</span><b>${fmtPrice(scenario.target1)}</b></div>
+      <div class="up"><span>цель 2</span><b>${fmtPrice(scenario.target2)}</b></div>` : '';
+  }
+  if (drivers) {
+    drivers.innerHTML = (scenario.drivers || []).length
+      ? (scenario.drivers || []).map((d) => `<a class="driver ${esc(d.tone)}" href="${esc(d.url || '#')}" target="_blank" rel="noreferrer">${esc(d.title)}<span>${esc(d.source || '')}</span></a>`).join('')
+      : '<div class="empty-state compact">Нет заголовков с выраженным тоном</div>';
+  }
+  if (score) {
+    score.innerHTML = scorecard
+      ? `Отдельный журнал: <b>${scorecard.total}</b> сценариев · сверено <b>${scorecard.evaluated}</b> · точность <b>${scorecard.accuracy != null ? `${scorecard.accuracy}%` : '—'}</b>${scorecard.expectancyPct != null ? ` · expectancy <b>${fmtSigned(scorecard.expectancyPct, 0)}%</b>` : ''}`
+      : '';
+  }
+  state.newsScenario = scenario;
+}
+
+async function loadNewsModel() {
+  try {
+    renderNewsModel(await api('/api/news/forecast'));
+  } catch (error) {
+    const rationale = $('#news-model-rationale');
+    if (rationale) rationale.textContent = `Новостная модель недоступна: ${error.message}`;
+  }
+}
+
+// Переключатель инструмента: список золотых инструментов из T-Invest API.
+async function loadInstruments(force = false) {
+  const select = $('#instrument-select');
+  if (!select) return;
+  select.innerHTML = '<option value="">Загружаем список…</option>';
+  try {
+    const data = await api('/api/instruments');
+    state.instruments = data.instruments || [];
+    if (!data.instruments?.length) {
+      select.innerHTML = '<option value="">—</option>';
+      $('#instrument-spec').textContent = data.note || 'Инструменты не найдены.';
+      return;
+    }
+    select.innerHTML = data.instruments.map((item) => {
+      const mark = item.shortCapable ? ' · шорт возможен' : ' · спот';
+      return `<option value="${esc(item.ticker)}"${item.ticker === data.current ? ' selected' : ''}>${esc(item.ticker)} — ${esc(item.name || '')}${mark}</option>`;
+    }).join('');
+    const selected = data.instruments.find((item) => item.ticker === (select.value || data.current)) || data.instruments[0];
+    renderInstrumentSpec(selected);
+  } catch (error) {
+    select.innerHTML = '<option value="">—</option>';
+    $('#instrument-spec').textContent = error.message;
+  }
+}
+
+function renderInstrumentSpec(item) {
+  const host = $('#instrument-spec');
+  if (!host || !item) return;
+  host.innerHTML = `${esc(item.name || item.ticker)} · лот <b>${item.lot}</b> г · шаг цены <b>${item.minPriceIncrement}</b> ₽ · тип: <b>${esc(item.kindLabel || '—')}</b><br><span class="muted-note">${esc(item.shortNote || '')}</span>`;
+}
+
 function renderTrading(data) {
   if (!data?.snapshot) return;
   const snap = data.snapshot;
@@ -607,6 +764,10 @@ function renderTrading(data) {
   $('#trade-levels').textContent = actionable
     ? `Сценарий ${actionable.horizonLabel}: вход ${fmtPrice(actionable.entryLow)}–${fmtPrice(actionable.entryHigh)} · стоп ${fmtPrice(actionable.stop)} · цель ${fmtPrice(actionable.target1)}`
     : 'Активных сценариев нет — нажмите «Обновить» на дашборде';
+
+  renderSpecStrip(data.spec);
+  renderOrderBook(data.orderBook);
+  renderMetrics(data.metrics);
 
   const orders = data.orders || [];
   const open = orders.filter((o) => o.status === 'open');
@@ -655,6 +816,7 @@ async function refreshTrading() {
     state.tradingHistory = buildTradeDots(data.trades || []);
     renderTrading(data);
     renderEquityCurve(data.equityCurve || []);
+    if (state.view === 'trading') loadNewsModel();
   } catch (error) {
     if (state.view === 'trading') notify(error.message, 'error');
   }

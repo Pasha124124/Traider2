@@ -136,6 +136,60 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 'Segoe UI',Ar
 .news-impact.positive{background:rgba(72,160,120,.12)}
 .news-impact.negative{background:rgba(214,120,110,.12)}
 .news-impact.weak{opacity:.72}
+
+/* ---- переключатель инструмента и спецификация ---- */
+.instrument-switcher{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+.instrument-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.instrument-row .text-input{flex:1;min-width:170px}
+.spec-detail{font-size:12px;line-height:1.6;color:var(--dim);margin:2px 0 12px}
+.spec-strip{display:flex;flex-wrap:wrap;gap:12px;margin:0 0 12px;padding:8px 10px;border-radius:6px;background:var(--bg-3);font:10px var(--mono);color:var(--subtle)}
+.spec-strip b{color:var(--text);font-weight:500}
+
+/* ---- стакан ---- */
+.book-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-bottom:12px}
+.book-stat{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--subtle)}
+.book-stat b{font:500 11.5px var(--mono);color:var(--text)}
+.book-stat b.up{color:var(--up)}
+.book-stat b.down{color:var(--red)}
+.book-ladder{display:grid;gap:1px;font:10px var(--mono)}
+.book-row{position:relative;display:flex;justify-content:space-between;gap:10px;padding:3px 7px;border-radius:3px;overflow:hidden;background:var(--bg-3);color:var(--subtle)}
+.book-row i{position:absolute;inset:0 auto 0 0;opacity:.12;background:var(--up);z-index:0}
+.book-row.ask i{background:var(--down)}
+.book-row span,.book-row b{position:relative;z-index:1}
+.book-row.bid span{color:var(--down)}
+.book-row.ask span{color:var(--up)}
+.book-spread{text-align:center;padding:4px 0;font:9px var(--mono);color:var(--subtle);letter-spacing:.06em}
+
+/* ---- метрики expectancy и просадки ---- */
+.metrics-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-top:4px}
+.metric-cell{background:var(--surface);padding:8px 10px;display:grid;gap:2px}
+.metric-cell span{font:9px var(--mono);letter-spacing:.06em;color:var(--subtle)}
+.metric-cell b{font:500 14px var(--mono)}
+.metric-cell.up b{color:var(--up)}
+.metric-cell.down b{color:var(--red)}
+
+/* ---- новостная модель ---- */
+.news-model-main{display:flex;align-items:baseline;gap:12px;margin:8px 0 6px}
+.news-model-action{font:600 16px var(--mono)}
+.news-model-action.long{color:var(--up)}
+.news-model-action.short{color:var(--red)}
+.news-model-action.wait{color:var(--subtle)}
+.news-model-conf{font:10px var(--mono);color:var(--subtle)}
+.news-model-rationale{font-size:12px;line-height:1.6;color:var(--dim);margin-bottom:10px}
+.news-model-levels{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;padding:9px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.news-model-levels div{display:grid;gap:2px}
+.news-model-levels span{font:9px var(--mono);letter-spacing:.06em;color:var(--subtle)}
+.news-model-levels b{font:500 12px var(--mono)}
+.news-model-levels .up b{color:var(--up)}
+.news-model-levels .down b{color:var(--red)}
+.news-model-drivers{display:grid;gap:5px;margin-top:10px}
+.driver{display:grid;gap:1px;padding:6px 8px;border-radius:4px;background:var(--bg-3);text-decoration:none;color:var(--text);font-size:11.5px;line-height:1.45}
+.driver:hover{background:var(--bg-2)}
+.driver span{font:9px var(--mono);color:var(--subtle)}
+.driver.positive{border-left:2px solid var(--up)}
+.driver.negative{border-left:2px solid var(--red)}
+.news-model-score{margin-top:10px;font:10px var(--mono);color:var(--subtle)}
+.news-model-score b{color:var(--text)}
 .chart-tooltip{position:absolute;pointer-events:none;background:var(--text);color:#fff;border-radius:8px;padding:8px 11px;font:11px var(--mono);line-height:1.6;white-space:nowrap;z-index:5;box-shadow:0 4px 16px rgba(0,0,0,.18)}
 .chart-tooltip .tt-up{color:#7ee2a8}
 .chart-tooltip .tt-down{color:#ff9d92}

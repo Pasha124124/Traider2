@@ -5,6 +5,8 @@ const crypto = require('node:crypto');
 const { URL } = require('node:url');
 const { analyzeMarket, evaluateForecasts, DEFAULT_HORIZONS } = require('./src/analysis');
 const newsSources = require('./src/news');
+const broker = require('./src/broker');
+const newsModel = require('./src/news-model');
 const trading = require('./src/trading');
 
 const ROOT = __dirname;
@@ -17,6 +19,7 @@ const PORT = Number(process.env.PORT) > 0 ? Number(process.env.PORT) : 4173;
 const BODY_LIMIT = 96 * 1024;
 const MARKET_CACHE_MS = 60_000;
 const AI_INSIGHT_PATH = path.join(DATA_DIR, 'ai-insight.json');
+const NEWS_FORECASTS_PATH = path.join(DATA_DIR, 'news-forecasts.json');
 let marketCache = null;
 let marketCacheAt = 0;
 let marketRefreshPromise = null;
@@ -48,6 +51,9 @@ function safeSettings() {
     yandexFolderId: YANDEX_FOLDER_ID_DEFAULT,
     yandexModel: 'yandexgpt-5.1',
     provider: current.provider || 'moex-iss',
+    instrument: current.instrument || 'GLDRUB_TOM',
+    instrumentSpec: current.instrumentSpec || null,
+    feeRate: Number.isFinite(Number(current.feeRate)) ? Number(current.feeRate) : 0.0005,
   };
 }
 
@@ -105,6 +111,9 @@ async function fetchJson(url, options = {}) {
   try {
     const response = await fetch(url, { ...options, timeoutMs: undefined, signal: controller.signal });
     const text = await response.text();
+    // Некоторые ответы ISS приходят HTML-страницей ошибки: отдаём их как есть,
+    // чтобы вызывающий код мог отличить «не данные» от «сломанный JSON».
+    if (options.asText && !/^[[{"]/.test(text.trim())) return text;
     if (!response.ok) {
       throw new Error(`Поставщик вернул HTTP ${response.status}${text ? `: ${text.slice(0, 300)}` : ''}`);
     }
@@ -539,7 +548,59 @@ function validateSettings(body) {
       else delete next[field];
     }
   }
+  if (Object.hasOwn(body, 'feeRate')) {
+    const rate = Number(body.feeRate);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 0.05) throw new Error('Комиссия должна быть от 0 до 5%');
+    next.feeRate = rate;
+  }
   return next;
+}
+
+// Спецификация инструмента из T-Invest API: лот, шаг цены, возможность шорта.
+// Без неё заявки отправлялись бы с выдуманным лотом и получали бы отказ биржи.
+let specCache = { key: '', value: null };
+async function instrumentSpec(config, force = false) {
+  const cached = settings().instrumentSpec;
+  const key = `${config.instrument || 'GLDRUB_TOM'}|${Boolean(config.tInvestToken)}`;
+  if (!force && cached && specCache.key === key && specCache.value) return specCache.value;
+  if (!config.tInvestToken) {
+    const fallback = { ticker: config.instrument || 'GLDRUB_TOM', lot: 1, minPriceIncrement: 0.01, shortCapable: false, fromBroker: false, kindLabel: 'спот', shortNote: 'Спецификация недоступна без токена T-Invest: используется запасной лот 1 г.', name: config.instrument || 'GLDRUB_TOM' };
+    return fallback;
+  }
+  try {
+    const spec = await broker.resolveInstrument(config.tInvestToken, config.instrument || 'GLDRUB_TOM', fetchJson);
+    const value = { ...spec, fromBroker: true, fetchedAt: new Date().toISOString() };
+    specCache = { key, value };
+    const current = settings();
+    writeJson(SETTINGS_PATH, { ...current, instrumentSpec: value });
+    return value;
+  } catch (error) {
+    if (cached && cached.ticker === (config.instrument || 'GLDRUB_TOM')) return cached;
+    return { ticker: config.instrument || 'GLDRUB_TOM', lot: 1, minPriceIncrement: 0.01, shortCapable: false, fromBroker: false, kindLabel: 'спот', shortNote: `Спецификация не получена: ${error.message}` };
+  }
+}
+
+// Стакан: сначала T-Invest, при отсутствии токена — публичный MOEX ISS.
+let bookCache = null;
+let bookCacheAt = 0;
+const BOOK_CACHE_MS = 10_000;
+async function orderBook(config, ticker, price) {
+  const fresh = bookCache && Date.now() - bookCacheAt < BOOK_CACHE_MS;
+  if (!fresh) {
+    const symbol = ticker || config.instrument || 'GLDRUB_TOM';
+    try {
+      const spec = await instrumentSpec(config);
+      bookCache = config.tInvestToken && spec.figi
+        ? await broker.tInvestOrderBook(config.tInvestToken, spec.figi, fetchJson)
+        : await broker.moexOrderBook(symbol, fetchJson);
+      bookCacheAt = Date.now();
+    } catch (error) {
+      bookCache = { error: error.message, bids: [], asks: [], source: 'none' };
+      bookCacheAt = Date.now() - BOOK_CACHE_MS + 2000;
+    }
+  }
+  const stats = broker.orderBookStats(bookCache, price);
+  return { book: bookCache, stats };
 }
 
 function sanitizeForecast(forecast) {
@@ -559,7 +620,8 @@ async function autoTradeTickJob() {
   const market = await chooseProvider(config);
   const price = market.candles.at(-1)?.close;
   const forecasts = readJson(FORECASTS_PATH, []).map(sanitizeForecast);
-  const { state, snapshot, events } = trading.autoTradeTick({ market: { candles: market.candles, quote: market.quote }, forecasts });
+  const { book } = await orderBook(config, config.instrument, price);
+  const { state, snapshot, events } = trading.autoTradeTick({ market: { candles: market.candles, quote: market.quote }, forecasts, book });
   if (events.length) trading.writeState(state);
   return { snapshot, events, price };
 }
@@ -571,6 +633,24 @@ async function handleApi(req, res, url) {
   }
   if (req.method === 'GET' && url.pathname === '/api/config') return send(res, 200, safeSettings());
 
+  if (req.method === 'POST' && url.pathname === '/api/config/instrument') {
+    const body = await readBody(req);
+    const ticker = String(body.ticker || '').trim().toUpperCase();
+    if (!/^[A-Z0-9_.-]{3,24}$/.test(ticker)) throw Object.assign(new Error('Некорректный тикер инструмента'), { statusCode: 400 });
+    if (!config.tInvestToken) throw Object.assign(new Error('Нужен read-only токен T-Invest, чтобы получить спецификацию инструмента.'), { statusCode: 400 });
+    const spec = await broker.resolveInstrument(config.tInvestToken, ticker, fetchJson);
+    const current = settings();
+    writeJson(SETTINGS_PATH, { ...current, instrument: ticker, instrumentSpec: { ...spec, fetchedAt: new Date().toISOString() } });
+    specCache = { key: `${ticker}|true`, value: { ...spec, fetchedAt: new Date().toISOString() } };
+    bookCache = null;
+    marketCache = null;
+    tInvestInstrumentCache = null;
+    if (tInvestStream) stopTInvestStream();
+    const tradingState = trading.readState();
+    tradingState.spec = spec;
+    trading.writeState(tradingState);
+    return send(res, 200, { ok: true, settings: safeSettings(), spec });
+  }
   if (req.method === 'POST' && url.pathname === '/api/config') {
     const body = await readBody(req);
     const next = validateSettings(body);
@@ -596,6 +676,11 @@ async function handleApi(req, res, url) {
         dailyCandles: market.dailyCandles,
         news: ruNews.impact,
       });
+      const price = market.candles.at(-1)?.close || market.quote?.last || null;
+      const newsHistory = readJson(NEWS_FORECASTS_PATH, []);
+      const newsEvaluated = newsModel.evaluateNewsForecasts(newsHistory, market.candles, Date.now());
+      if (newsEvaluated.changed) writeJson(NEWS_FORECASTS_PATH, newsEvaluated.forecasts);
+      const newsScenario = newsModel.newsForecast(ruNews.impact, price, { instrument: market.instrument });
       const news = ruNews.items;
       const sanitized = evaluated.forecasts.map(sanitizeForecast);
       analysis.forecasts = (analysis.forecasts || []).map(sanitizeForecast);
@@ -607,6 +692,9 @@ async function handleApi(req, res, url) {
         news,
         newsImpact: ruNews.impact,
         newsFeeds: ruNews.feeds,
+        newsScenario,
+        newsHistory: newsEvaluated.forecasts.slice(0, 50),
+        newsScorecard: newsModel.newsScorecard(newsEvaluated.forecasts),
         horizons: DEFAULT_HORIZONS,
         settings: safeSettings(),
       });
@@ -650,6 +738,27 @@ async function handleApi(req, res, url) {
     });
     const merged = [...fresh, ...forecasts].slice(0, 1000);
     writeJson(FORECASTS_PATH, merged);
+    // Новостная модель пишет в отдельный��урнал: её сценарии не смешиваются с ценовыми.
+    const newsSnapshot = newsModel.newsForecast(ruNews.impact, market.candles.at(-1)?.close || market.quote?.last || null, { instrument: market.instrument });
+    let recordedNews = null;
+    if (newsSnapshot.available && newsSnapshot.action !== 'wait') {
+      const createdAt = new Date();
+      const history = readJson(NEWS_FORECASTS_PATH, []);
+      const next = readJson(NEWS_FORECASTS_PATH, []);
+      next.unshift({
+        ...newsSnapshot,
+        id: crypto.randomUUID(),
+        createdAt: createdAt.toISOString(),
+        referenceTime: createdAt.toISOString(),
+        referencePrice: newsSnapshot.entry,
+        expiresAt: new Date(createdAt.getTime() + Number(newsSnapshot.durationMs || 0)).toISOString(),
+        verification: 'pending',
+        evaluatedPrice: null,
+        outcome: null,
+      });
+      writeJson(NEWS_FORECASTS_PATH, next.slice(0, 500));
+      recordedNews = next[0];
+    }
     const news = ruNews.items;
     let explanation = null;
     let aiError = null;
@@ -667,10 +776,27 @@ async function handleApi(req, res, url) {
       analysis,
       market: { quote: market.quote, provider: market.provider, fetchedAt: market.fetchedAt, dataStatus: market.dataStatus, caveat: market.caveat },
       forecasts: fresh.map(sanitizeForecast),
+      newsScenario: newsSnapshot,
+      newsForecastSaved: recordedNews,
+      newsScorecard: newsModel.newsScorecard(readJson(NEWS_FORECASTS_PATH, [])),
       explanation,
       aiError,
       news,
       settings: safeSettings(),
+    });
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/news/forecast') {
+    const market = await chooseProvider(config);
+    const ruNews = await russianNews();
+    const price = market.candles.at(-1)?.close || market.quote?.last || null;
+    const history = readJson(NEWS_FORECASTS_PATH, []);
+    const evaluated = newsModel.evaluateNewsForecasts(history, market.candles, Date.now());
+    if (evaluated.changed) writeJson(NEWS_FORECASTS_PATH, evaluated.forecasts);
+    return send(res, 200, {
+      scenario: newsModel.newsForecast(ruNews.impact, price, { instrument: market.instrument }),
+      history: evaluated.forecasts.slice(0, 100),
+      scorecard: newsModel.newsScorecard(evaluated.forecasts),
     });
   }
 
@@ -703,16 +829,33 @@ async function handleApi(req, res, url) {
   }
 
   // ---------- Демо-счёт и торговля ----------
+  if (req.method === 'GET' && url.pathname === '/api/instruments') {
+    if (!config.tInvestToken) return send(res, 200, { instruments: [], note: 'Нужен read-only токен T-Invest, чтобы получить спецификацию инструментов.' });
+    try {
+      const instruments = await broker.discoverGoldInstruments(config.tInvestToken, fetchJson);
+      return send(res, 200, { instruments, current: config.instrument || 'GLDRUB_TOM' });
+    } catch (error) {
+      return send(res, 502, { error: error.message, instruments: [] });
+    }
+  }
   if (req.method === 'GET' && url.pathname === '/api/trading') {
     const market = await chooseProvider(config);
+    const price = market.candles.at(-1)?.close;
+    const spec = await instrumentSpec(config);
     const state = trading.readState();
-    const fills = trading.processOpenOrders(state, market.candles.at(-1)?.close, new Date().toISOString());
+    state.spec = spec;
+    state.feeRate = safeSettings().feeRate;
+    const { book, stats } = await orderBook(config, config.instrument, price);
+    const fills = trading.processOpenOrders(state, price, new Date().toISOString(), book);
     if (fills.length) trading.writeState(state);
-    trading.recordEquity(state, market.candles.at(-1)?.close);
-    if (fills.length) trading.writeState(state);
+    trading.recordEquity(state, price);
+    trading.writeState(state);
     return send(res, 200, {
-      snapshot: trading.snapshot(state, market.candles.at(-1)?.close),
-      price: market.candles.at(-1)?.close || null,
+      snapshot: trading.snapshot(state, price),
+      price: price || null,
+      spec,
+      orderBook: { source: book?.source || 'none', bestBid: stats.bestBid, bestAsk: stats.bestAsk, mid: stats.mid, spread: stats.spread, spreadPct: stats.spreadPct, imbalance: stats.imbalance, bidVolume: stats.bidVolume, askVolume: stats.askVolume, levels: (book?.bids || []).slice(0, 8).concat((book?.asks || []).slice(0, 8)), error: book?.error || null },
+      metrics: trading.performanceMetrics(state),
       orders: state.orders.slice(0, 50),
       trades: state.trades.slice(0, 50),
       equityCurve: state.equityCurve.slice(0, 200),
@@ -723,10 +866,19 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const market = await chooseProvider(config);
     const price = market.candles.at(-1)?.close;
+    const spec = await instrumentSpec(config);
     const state = trading.readState();
-    const order = trading.placeOrder(state, { side: body.side, grams: Number(body.grams), limitPrice: body.limitPrice != null ? Number(body.limitPrice) : null, marketPrice: price, reason: body.reason || null, source: 'manual' });
+    state.spec = spec;
+    state.feeRate = safeSettings().feeRate;
+    const { book } = await orderBook(config, config.instrument, price);
+    // Риск считаем по стопу сценария, если он приложен к заявке.
+    const linked = state.forecasts?.find((item) => item.id === body.forecastId);
+    const stopPrice = linked ? Number(linked.stop) : null;
+    const riskRub = stopPrice && price ? Math.abs(price - stopPrice) * Math.abs(Number(body.grams) || 0) : null;
+    const order = trading.placeOrder(state, { side: body.side, grams: Number(body.grams), limitPrice: body.limitPrice != null ? Number(body.limitPrice) : null, marketPrice: price, reason: body.reason || null, source: 'manual', book, riskRub });
     trading.writeState(state);
-    return send(res, 200, { ok: true, order, snapshot: trading.snapshot(state, price) });
+    const latest = state.trades[0];
+    return send(res, 200, { ok: true, order, fill: latest ? { price: latest.priceRubPerG, slippageRub: latest.slippageRub, levelsUsed: latest.levelsUsed, execution: latest.execution } : null, snapshot: trading.snapshot(state, price), metrics: trading.performanceMetrics(state) });
   }
   if (req.method === 'POST' && url.pathname === '/api/trading/cancel') {
     const body = await readBody(req);
